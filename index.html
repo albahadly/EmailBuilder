@@ -142,7 +142,7 @@
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><b>email/body</b><span class="ver" id="appVersion">v1.4</span><span>block → table serializer</span></div>
+    <div class="brand"><b>email/body</b><span class="ver" id="appVersion">v1.5</span><span>block → table serializer</span></div>
     <select class="btn" id="tplSel" title="Load a starter"><option value="">Start from…</option></select>
     <button class="btn" id="saveTplBtn" title="Save current design as a reusable template">Save template</button>
     <button class="btn" id="manageTplBtn" title="Manage saved custom templates">Manage templates</button>
@@ -240,7 +240,7 @@
    ============================================================ */
 let uid = 0;
 const nid = () => 'b' + (++uid);
-const APP_VERSION = 'v1.4';
+const APP_VERSION = 'v1.5';
 const DRAFT_KEY = 'email_builder_draft_v1';
 const STATE_SCHEMA_VERSION = 2;
 const CUSTOM_TEMPLATES_KEY = 'email_builder_custom_templates_v1';
@@ -255,9 +255,17 @@ const DEFAULT_SETTINGS = {
   pageBg: '#eef1f5', cardBg: '#ffffff',
   font: 'Arial, Helvetica, sans-serif',
   text: '#1f2933', link: '#0b6bcb',
+  safeReset: true,
+  compatProfile: 'mainstream',
   dir: 'ltr', esp: 'handlebars',
   preheader: 'Rule versioning, a faster evaluator, and the new visual builder.'
 };
+
+const COMPAT_PROFILES = [
+  ['mainstream','Mainstream providers'],
+  ['broad','Broad coverage'],
+  ['legacy','Legacy-heavy coverage']
+];
 
 const doc = {
   settings: { ...DEFAULT_SETTINGS },
@@ -638,11 +646,11 @@ function bodyHtml(o = {}) {
   const pre = s.preheader
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${s.cardBg};">${esc(s.preheader)}&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;</div>\n` : '';
   const dir = s.dir === 'rtl' ? ' dir="rtl"' : '';
-  return `${pre}<table ${PT} width="100%"${dir} style="background-color:${s.pageBg};margin:0;padding:0;width:100%;">
+  return `${pre}<table ${PT} width="100%"${dir} bgcolor="${s.pageBg}" style="background-color:${s.pageBg};margin:0;padding:0;width:100%;">
 <tr>
 <td align="center" style="padding:24px 10px;">
 <!--[if mso]><table ${PT} width="${s.width}"><tr><td><![endif]-->
-<table ${PT} width="100%" style="width:100%;max-width:${s.width}px;background-color:${s.cardBg};${px(s.radius) ? `border-radius:${px(s.radius)}px;overflow:hidden;` : ''}">
+<table ${PT} width="100%" bgcolor="${s.cardBg}" style="width:100%;max-width:${s.width}px;background-color:${s.cardBg};${px(s.radius) ? `border-radius:${px(s.radius)}px;overflow:hidden;` : ''}">
 ${rows}
 </table>
 <!--[if mso]></td></tr></table><![endif]-->
@@ -653,6 +661,21 @@ ${rows}
 
 function fullHtml() {
   const s = doc.settings;
+  const reset = s.safeReset ? `<style type="text/css">
+  #outlook a { padding:0; }
+  img { border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; }
+  table { border-collapse:collapse; }
+  a[x-apple-data-detectors],
+  #MessageViewBody a,
+  u + #body a {
+    color: inherit !important;
+    text-decoration: none !important;
+    font-size: inherit !important;
+    font-family: inherit !important;
+    font-weight: inherit !important;
+    line-height: inherit !important;
+  }
+</style>` : '';
   return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" dir="${s.dir}">
 <head>
@@ -662,12 +685,13 @@ function fullHtml() {
 <meta name="x-apple-disable-message-reformatting">
 <meta name="color-scheme" content="light">
 <meta name="supported-color-schemes" content="light">
+${reset}
 <title></title>
 <!--[if mso]>
 <noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
 <![endif]-->
 </head>
-<body style="margin:0;padding:0;background-color:${s.pageBg};-webkit-text-size-adjust:100%;">
+<body id="body" bgcolor="${s.pageBg}" style="margin:0;padding:0;background-color:${s.pageBg};-webkit-text-size-adjust:100%;">
 ${bodyHtml()}
 </body>
 </html>`;
@@ -678,6 +702,7 @@ ${bodyHtml()}
    ============================================================ */
 function runChecks() {
   const s = doc.settings, out = [], html = bodyHtml();
+  const profile = s.compatProfile || DEFAULT_SETTINGS.compatProfile;
   const push = (level, title, msg) => out.push({ level, title, msg });
 
   const noAlt = doc.blocks.filter(b => (b.type === 'image' || b.type === 'logo') && !String(b.alt||'').trim());
@@ -703,6 +728,23 @@ function runChecks() {
   const kb = new Blob([html]).size / 1024;
   if (kb > 102) push('err','Over the Gmail clip limit', `${kb.toFixed(1)} KB. Gmail truncates at 102 KB and hides your tracking pixel and footer behind a "view entire message" link.`);
   else if (kb > 70) push('warn','Approaching the clip limit', `${kb.toFixed(1)} KB of 102 KB.`);
+
+  if (!s.safeReset) push('warn','Safe reset disabled','Apple and Gmail clients may auto-style links and fonts. Turn on Safe reset for more consistent rendering.');
+
+  if (profile !== 'mainstream') {
+    const threePlusCols = doc.blocks.some(b => b.type === 'columns' && (b.cols || []).length > 2);
+    if (threePlusCols) push('warn','Three+ column layout','Broader provider support is stronger with one or two columns, especially in legacy Outlook reading panes.');
+
+    const wideDataTable = doc.blocks.some(b => b.type === 'table' && String(b.data || '').split('\n')
+      .some(r => r.split('|').map(c => c.trim()).filter(Boolean).length > 3));
+    if (wideDataTable) push('warn','Wide table detected','Tables with more than 3 columns are more likely to overflow on narrow clients and older webmail panes.');
+  }
+
+  if (profile === 'legacy') {
+    const featureBlocks = doc.blocks.filter(b => b.type === 'feature').length;
+    if (featureBlocks) push('warn','Feature block in legacy profile', `${featureBlocks} feature block${featureBlocks > 1 ? 's are' : ' is'} present. Legacy clients are usually safer with stacked single-column sections.`);
+    if (s.width > 600) push('warn','Legacy profile width target','For legacy-heavy support, keep container width at 600px or less.');
+  }
 
   const unsafeRaw = doc.blocks.filter(b => b.type === 'html' && sanitizeRawHtml(b.raw || '') !== String(b.raw || ''));
   if (unsafeRaw.length) push('err','Unsafe raw HTML', `${unsafeRaw.length} raw block${unsafeRaw.length>1?'s were':''} sanitized to remove risky tags or attributes.`);
@@ -749,6 +791,8 @@ function normalizeSettings(input) {
   next.width = Math.max(320, parseInt(next.width, 10) || DEFAULT_SETTINGS.width);
   next.pad = Math.max(0, parseInt(next.pad, 10) || DEFAULT_SETTINGS.pad);
   next.radius = Math.max(0, parseInt(next.radius, 10) || DEFAULT_SETTINGS.radius);
+  next.safeReset = !(next.safeReset === false || String(next.safeReset).toLowerCase() === 'false');
+  next.compatProfile = COMPAT_PROFILES.some(([k]) => k === next.compatProfile) ? next.compatProfile : DEFAULT_SETTINGS.compatProfile;
   next.dir = next.dir === 'rtl' ? 'rtl' : 'ltr';
   next.esp = ESP[next.esp] ? next.esp : DEFAULT_SETTINGS.esp;
   ['pageBg','cardBg','font','text','link','preheader'].forEach(k => {
@@ -1331,6 +1375,10 @@ function renderEmail(s) {
     ${fSel('Text direction','$dir',s.dir,[['ltr','Left to right'],['rtl','Right to left']])}
     ${fArea('Preheader','$preheader',s.preheader,3)}
     <div class="note"><span><b>Preheader</b>The preview line in the inbox list. It stays hidden in the body and is padded with zero-width joiners so the client cannot pull your first paragraph in after it.</span></div>
+    <div class="sect"><span class="eyebrow">Compatibility</span></div>
+    ${fSel('Provider profile','$compatProfile',s.compatProfile,COMPAT_PROFILES)}
+    ${fSel('Safe reset in full document','$safeReset',s.safeReset,[[true,'On'],[false,'Off']])}
+    <div class="note" style="background:rgba(79,209,255,.06);border-color:rgba(79,209,255,.25);color:#a9d9ea"><span><b style="color:var(--accent)">Profile</b>Mainstream targets current major clients. Broad and Legacy profiles add stricter warnings for older Outlook and webmail engines.</span></div>
     <div class="sect"><span class="eyebrow">Merge tags</span></div>
     ${fSel('Platform','$esp',s.esp,Object.entries(ESP).map(([k,v]) => [k,v.label]))}
     <div class="note" style="background:rgba(79,209,255,.06);border-color:rgba(79,209,255,.25);color:#a9d9ea"><span><b style="color:var(--accent)">Insert</b>Select text in any block and use the merge-tag menu in the floating toolbar. Corner radius on the container is ignored by Outlook, which squares it off.</span></div>`;
@@ -1338,8 +1386,9 @@ function renderEmail(s) {
 
 function renderChecks() {
   const list = runChecks();
+  const profileLabel = (COMPAT_PROFILES.find(([k]) => k === doc.settings.compatProfile) || COMPAT_PROFILES[0])[1];
   const icon = { err:'✕', warn:'!', ok:'✓' };
-  return `<h4 class="eyebrow">Pre-send checks<button class="btn icon" id="recheck">run</button></h4>`
+  return `<h4 class="eyebrow">Pre-send checks · ${esc(profileLabel)}<button class="btn icon" id="recheck">run</button></h4>`
     + list.map(c => `<div class="check ${c.level}"><i>${icon[c.level]}</i><div><b>${c.title}</b><span>${c.msg}</span></div></div>`).join('');
 }
 
@@ -1369,7 +1418,9 @@ $('ibody').addEventListener('input', e => {
       b.cols.length = n; render(); return;
     }
     if (key === 'items') { b.items = el.value.split('\n'); renderCanvas(); flagChecks(); return; }
-    doc.settings[key] = ['width','pad','radius'].includes(key) ? (parseInt(el.value,10) || 0) : el.value;
+    let sv = el.value;
+    if (key === 'safeReset') sv = sv === 'true';
+    doc.settings[key] = ['width','pad','radius'].includes(key) ? (parseInt(el.value,10) || 0) : sv;
     renderCanvas(); flagChecks(); syncColor(el,k); return;
   }
 

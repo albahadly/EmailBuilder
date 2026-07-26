@@ -2,7 +2,7 @@
 
 EmailBuilder is a single-page visual editor for building email bodies and exporting table-based HTML that works across major email clients.
 
-Current version: v1.4
+Current version: v1.5
 
 ## Live URL
 
@@ -18,6 +18,9 @@ Current version: v1.4
 - Supports loading and saving JSON so email drafts can be versioned and reused.
 - Validates and migrates legacy JSON drafts with schema-aware restore rules.
 - Autosaves drafts in the browser and offers restore on next load.
+- Adds compatibility profiles (Mainstream/Broad/Legacy) with profile-aware pre-send warnings.
+- Supports optional safe reset CSS in full-document export for Apple/Gmail/Outlook quirks.
+- Adds bgcolor fallback attributes in exported wrappers for stronger legacy client rendering.
 - Supports full custom-template management: save, load, rename, delete, import, and export.
 - Applies safety checks and sanitization to raw HTML blocks and imported state payloads.
 - Uses in-app dialogs for confirmations and naming flows instead of browser prompt/confirm popups.

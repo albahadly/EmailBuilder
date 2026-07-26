@@ -45,8 +45,8 @@
 <body>
   <h1>EmailBuilder smoke tests</h1>
   <p>
-    This page runs quick checks for serializer output, text export generation,
-    critical check detection, and migration of legacy draft data.
+    This page runs quick checks for serializer output, compatibility hardening,
+    text export generation, critical check detection, and migration of legacy draft data.
   </p>
   <button id="runBtn">Run tests</button>
   <pre id="log"></pre>
@@ -110,15 +110,30 @@ async function runTests() {
       { id: 'b2', type: 'text', html: 'Read the <a href="https://example.com/docs">documentation</a> before rollout.' },
       { id: 'b3', type: 'button', label: 'Open app', href: 'https://example.com/go' },
       { id: 'b4', type: 'footer', html: 'Team updates', unsub: 'Unsubscribe', unsubHref: 'https://example.com/unsub' }
-    ], { preheader: 'Test preheader' }, 4);
+    ], { preheader: 'Test preheader', pageBg: '#101010', cardBg: '#fefefe', safeReset: true }, 4);
 
     app.restore(JSON.stringify(baseline));
     const html = app.bodyHtml();
     assert(html.includes('Unit Heading'), 'HTML serializer missing heading content.');
     assert(html.includes('https://example.com/go'), 'HTML serializer missing button URL.');
     assert(html.includes('<v:roundrect'), 'Outlook VML button fallback is missing.');
+    assert(html.includes('bgcolor="#101010"'), 'Outer wrapper should include page bgcolor fallback attribute.');
+    assert(html.includes('bgcolor="#fefefe"'), 'Inner wrapper should include card bgcolor fallback attribute.');
     log('PASS - HTML serializer and VML fallback');
 
+    const full = app.fullHtml();
+    assert(full.includes('<body id="body" bgcolor="#101010"'), 'Full document should include body bgcolor fallback attribute.');
+    assert(full.includes('u + #body a'), 'Safe reset CSS block should be present when enabled.');
+
+    const noReset = makeState([
+      { id: 'b1', type: 'text', html: 'No reset sample' },
+      { id: 'b2', type: 'footer', html: 'Footer', unsub: 'Unsubscribe', unsubHref: 'https://example.com/unsub' }
+    ], { safeReset: false }, 2);
+    app.restore(JSON.stringify(noReset));
+    assert(!app.fullHtml().includes('u + #body a'), 'Safe reset CSS block should be omitted when disabled.');
+    log('PASS - Compatibility hardening toggles');
+
+    app.restore(JSON.stringify(baseline));
     const text = app.textBody();
     assert(text.includes('Test preheader'), 'Text export missing preheader.');
     assert(text.includes('documentation (https://example.com/docs)'), 'Text export should preserve rich-text link URLs.');
@@ -136,6 +151,34 @@ async function runTests() {
     assert(checks.some(c => c.title === 'Placeholder links'), 'Checks should flag placeholder links.');
     assert(checks.some(c => c.title === 'No unsubscribe link'), 'Checks should flag missing unsubscribe.');
     log('PASS - Critical check detection');
+
+    const broadProfile = makeState([
+      {
+        id: 'b1',
+        type: 'columns',
+        cols: [
+          { img: '', html: 'One' },
+          { img: '', html: 'Two' },
+          { img: '', html: 'Three' }
+        ]
+      },
+      { id: 'b2', type: 'footer', html: 'Footer', unsub: 'Unsubscribe', unsubHref: 'https://example.com/unsub' }
+    ], { compatProfile: 'broad' }, 3);
+
+    app.restore(JSON.stringify(broadProfile));
+    const broadChecks = app.runChecks();
+    assert(broadChecks.some(c => c.title === 'Three+ column layout'), 'Broad profile should warn about three-plus columns.');
+
+    const legacyProfile = makeState([
+      { id: 'b1', type: 'feature', rows: [['A','B']] },
+      { id: 'b2', type: 'footer', html: 'Footer', unsub: 'Unsubscribe', unsubHref: 'https://example.com/unsub' }
+    ], { compatProfile: 'legacy', width: 640 }, 3);
+
+    app.restore(JSON.stringify(legacyProfile));
+    const legacyChecks = app.runChecks();
+    assert(legacyChecks.some(c => c.title === 'Feature block in legacy profile'), 'Legacy profile should warn on feature blocks.');
+    assert(legacyChecks.some(c => c.title === 'Legacy profile width target'), 'Legacy profile should warn when width is above 600px.');
+    log('PASS - Profile-aware compatibility checks');
 
     const legacy = {
       settings: { preheader: 'Legacy preheader' },
