@@ -117,6 +117,13 @@
   .bar{flex:1;height:5px;border-radius:3px;background:var(--panel-3);overflow:hidden}
   .bar i{display:block;width:0;height:100%;background:var(--accent);transition:width .2s}
   .bar i.warn{background:var(--amber)}
+  .tplsheet{width:min(860px,100%)}
+  .tplbody{flex:1;overflow:auto;padding:14px;background:#0f141b}
+  .tplrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);margin-bottom:9px}
+  .tplname{font-family:var(--mono);font-size:12px;color:var(--text)}
+  .tplmeta{margin-top:4px;font-size:11px;color:var(--muted)}
+  .tplactions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  .tplempty{padding:22px;border:1px dashed var(--line);border-radius:8px;background:var(--panel);color:var(--muted);line-height:1.6}
 
   @media (max-width:980px){.palette{flex:0 0 150px}.inspector{flex:0 0 236px}}
   @media (prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -127,9 +134,10 @@
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><b>email/body</b><span class="ver" id="appVersion">v1.2</span><span>block → table serializer</span></div>
+    <div class="brand"><b>email/body</b><span class="ver" id="appVersion">v1.3</span><span>block → table serializer</span></div>
     <select class="btn" id="tplSel" title="Load a starter"><option value="">Start from…</option></select>
     <button class="btn" id="saveTplBtn" title="Save current design as a reusable template">Save template</button>
+    <button class="btn" id="manageTplBtn" title="Manage saved custom templates">Manage templates</button>
     <button class="btn icon" id="undoBtn" title="Undo (Ctrl+Z)">↶</button>
     <button class="btn icon" id="redoBtn" title="Redo (Ctrl+Shift+Z)">↷</button>
     <div class="seg" id="viewSeg">
@@ -142,6 +150,7 @@
     <button class="btn" id="saveBtn">Save JSON</button>
     <button class="btn primary" id="exportBtn">Export HTML</button>
     <input type="file" id="fileIn" accept="application/json" hidden>
+    <input type="file" id="tplFileIn" accept="application/json" hidden>
   </div>
 
   <div class="main">
@@ -190,17 +199,34 @@
   </div>
 </div>
 
+<div class="modal" id="tplModal">
+  <div class="sheet tplsheet">
+    <header>
+      <span class="eyebrow">Custom templates</span>
+      <button class="btn" id="tplSaveCurrentBtn">Save current</button>
+      <button class="btn" id="tplImportBtn">Import JSON</button>
+      <button class="btn" id="tplExportAllBtn">Export all</button>
+      <button class="btn" id="tplCloseBtn">Close</button>
+    </header>
+    <div class="tplbody" id="tplBody"></div>
+  </div>
+</div>
+
 <script>
 /* ============================================================
    1. MODEL
    ============================================================ */
 let uid = 0;
 const nid = () => 'b' + (++uid);
-const APP_VERSION = 'v1.2';
+const APP_VERSION = 'v1.3';
 const DRAFT_KEY = 'email_builder_draft_v1';
 const STATE_SCHEMA_VERSION = 2;
 const CUSTOM_TEMPLATES_KEY = 'email_builder_custom_templates_v1';
 const IS_TEST_MODE = new URLSearchParams(location.search).get('test') === '1';
+const MAX_STATE_BYTES = 1024 * 1024;
+const MAX_BLOCK_COUNT = 250;
+const MAX_CUSTOM_TEMPLATES = 80;
+const MAX_TEMPLATE_IMPORT_BYTES = MAX_STATE_BYTES * 8;
 
 const DEFAULT_SETTINGS = {
   width: 600, pad: 32, radius: 0,
@@ -308,7 +334,7 @@ const HINTS = {
   spacer:  ['Non-breaking space','The cell holds &amp;nbsp; at font-size:0 — a truly empty cell collapses in Outlook.'],
   footer:  ['Required by law','A physical address and a working unsubscribe link are mandatory in most jurisdictions. Most ESPs swap their own merge tag in here.'],
   logo:    ['Retina','Export at 2× and set the width attribute to the display width, or it renders soft on high-density screens.'],
-  html:    ['Not sanitised','This passes straight through. Use it for ESP conditionals and merge blocks — anything you write here is your own to test.']
+  html:    ['Partially sanitised','Unsafe tags and script handlers are stripped. Keep this for ESP conditionals and trusted merge markup.']
 };
 
 /* ============================================================
@@ -351,6 +377,24 @@ function sanitize(html, s){
     });
   })(root);
   return root.innerHTML.trim();
+}
+
+function sanitizeRawHtml(raw) {
+  const root = document.createElement('div');
+  root.innerHTML = String(raw || '');
+  root.querySelectorAll('script,iframe,object,embed,form,meta,link').forEach(n => n.remove());
+  root.querySelectorAll('*').forEach(el => {
+    [...el.attributes].forEach(a => {
+      const key = a.name.toLowerCase();
+      const val = String(a.value || '');
+      if (key.startsWith('on')) { el.removeAttribute(a.name); return; }
+      if (key === 'srcdoc') { el.removeAttribute(a.name); return; }
+      if ((key === 'href' || key === 'src' || key === 'xlink:href') && /^\s*javascript:/i.test(val)) {
+        el.removeAttribute(a.name);
+      }
+    });
+  });
+  return root.innerHTML;
 }
 
 const PT = 'role="presentation" border="0" cellpadding="0" cellspacing="0"';
@@ -560,7 +604,7 @@ ${out}</table>
 
   case 'html':
     return `<tr>
-<td${bgAttr(b)} style="padding:${P};${bgStyle(b)}font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${b.color};">${b.raw}</td>
+<td${bgAttr(b)} style="padding:${P};${bgStyle(b)}font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${b.color};">${sanitizeRawHtml(b.raw)}</td>
 </tr>`;
   }
   return '';
@@ -638,7 +682,10 @@ function runChecks() {
   if (kb > 102) push('err','Over the Gmail clip limit', `${kb.toFixed(1)} KB. Gmail truncates at 102 KB and hides your tracking pixel and footer behind a "view entire message" link.`);
   else if (kb > 70) push('warn','Approaching the clip limit', `${kb.toFixed(1)} KB of 102 KB.`);
 
-  if (doc.blocks.some(b => b.type === 'html')) push('warn','Raw HTML block in use','Content in a raw block is passed through untouched and is not checked against client support.');
+  const unsafeRaw = doc.blocks.filter(b => b.type === 'html' && sanitizeRawHtml(b.raw || '') !== String(b.raw || ''));
+  if (unsafeRaw.length) push('err','Unsafe raw HTML', `${unsafeRaw.length} raw block${unsafeRaw.length>1?'s were':''} sanitized to remove risky tags or attributes.`);
+
+  if (doc.blocks.some(b => b.type === 'html')) push('warn','Raw HTML block in use','Raw blocks remain advanced/unsafe territory and should be tested in target clients after sanitization.');
 
   if (!out.length) push('ok','Nothing flagged','Every check passed. Still send a real test through Litmus, Email on Acid or your own seed list before you ship.');
   return out;
@@ -684,6 +731,7 @@ function normalizeSettings(input) {
 
 function normalizeBlocks(input) {
   const source = Array.isArray(input) ? input : [];
+  if (source.length > MAX_BLOCK_COUNT) throw new Error(`State has too many blocks (${source.length}/${MAX_BLOCK_COUNT}).`);
   const used = new Set();
   const out = [];
 
@@ -704,7 +752,12 @@ function normalizeBlocks(input) {
 }
 
 function decodeStatePayload(input) {
-  const parsed = typeof input === 'string' ? JSON.parse(input) : input;
+  let parsed = input;
+  if (typeof input === 'string') {
+    if (input.length > MAX_STATE_BYTES) throw new Error(`State payload exceeds ${Math.round(MAX_STATE_BYTES/1024)} KB.`);
+    try { parsed = JSON.parse(input); }
+    catch { throw new Error('State file is not valid JSON.'); }
+  }
   if (!parsed || typeof parsed !== 'object') throw new Error('Invalid state payload.');
 
   let state = parsed;
@@ -723,12 +776,14 @@ function decodeStatePayload(input) {
     return m ? Math.max(max, parseInt(m[1], 10)) : max;
   }, 0);
   const stateUid = Math.max(0, parseInt(state.uid, 10) || 0);
+  const savedAt = Math.max(0, parseInt(state.savedAt, 10) || 0) || Date.now();
 
   return {
     version: STATE_SCHEMA_VERSION,
     settings,
     blocks,
-    uid: Math.max(inferredUid, stateUid)
+    uid: Math.max(inferredUid, stateUid),
+    savedAt
   };
 }
 
@@ -788,13 +843,17 @@ function readCustomTemplates() {
   try {
     const raw = localStorage.getItem(CUSTOM_TEMPLATES_KEY);
     if (!raw) return {};
+    if (raw.length > MAX_STATE_BYTES * 8) return {};
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const out = {};
     Object.entries(parsed).forEach(([name, state]) => {
-      if (typeof name !== 'string' || !name.trim()) return;
-      if (!state || typeof state !== 'object') return;
-      out[name] = state;
+      const clean = cleanTemplateName(name);
+      if (!clean || BUILTIN_TEMPLATES[clean] || out[clean]) return;
+      try {
+        const decoded = decodeStatePayload(state);
+        out[clean] = { ...decoded, savedAt: decoded.savedAt || Date.now() };
+      } catch {}
     });
     return out;
   } catch {
@@ -802,11 +861,36 @@ function readCustomTemplates() {
   }
 }
 
+function cleanTemplateName(input) {
+  return String(input || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+}
+
+function templateFileName(name) {
+  return cleanTemplateName(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'template';
+}
+
+function templateSummary(state) {
+  const count = Array.isArray(state?.blocks) ? state.blocks.length : 0;
+  const stamp = state?.savedAt ? new Date(state.savedAt).toLocaleString() : '';
+  return `${count} block${count === 1 ? '' : 's'}${stamp ? ` · ${stamp}` : ''}`;
+}
+
+function keepTemplateLimit() {
+  const names = Object.keys(customTemplates);
+  if (names.length <= MAX_CUSTOM_TEMPLATES) return;
+  const pruned = Object.entries(customTemplates)
+    .sort((a,b) => (b[1]?.savedAt || 0) - (a[1]?.savedAt || 0))
+    .slice(0, MAX_CUSTOM_TEMPLATES);
+  customTemplates = Object.fromEntries(pruned);
+}
+
 function writeCustomTemplates() {
+  keepTemplateLimit();
   try { localStorage.setItem(CUSTOM_TEMPLATES_KEY, JSON.stringify(customTemplates)); } catch {}
 }
 
 let customTemplates = readCustomTemplates();
+keepTemplateLimit();
 
 function syncTemplateSelect() {
   const starter = Object.keys(BUILTIN_TEMPLATES).map(name => ({
@@ -822,13 +906,103 @@ function syncTemplateSelect() {
     + all.map(t => `<option value="${esc(t.value)}">${esc(t.label)}</option>`).join('');
 }
 
+function renderTemplateManager() {
+  const names = Object.keys(customTemplates).sort((a,b) => a.localeCompare(b));
+  if (!names.length) {
+    $('tplBody').innerHTML = '<div class="tplempty">No custom templates yet. Save your current design to create one.</div>';
+    return;
+  }
+  $('tplBody').innerHTML = names.map(name => {
+    const meta = templateSummary(customTemplates[name]);
+    const safe = esc(name);
+    return `<div class="tplrow">
+  <div>
+    <div class="tplname">${safe}</div>
+    <div class="tplmeta">${esc(meta)}</div>
+  </div>
+  <div class="tplactions">
+    <button class="btn icon" data-tpla="load" data-name="${safe}">open</button>
+    <button class="btn icon" data-tpla="rename" data-name="${safe}">rename</button>
+    <button class="btn icon" data-tpla="export" data-name="${safe}">export</button>
+    <button class="btn icon" data-tpla="delete" data-name="${safe}">delete</button>
+  </div>
+</div>`;
+  }).join('');
+}
+
+function exportCustomTemplate(name) {
+  const state = customTemplates[name];
+  if (!state) return;
+  const payload = { version: 1, templates: { [name]: state } };
+  download(JSON.stringify(payload, null, 2), `${templateFileName(name)}.json`, 'application/json');
+}
+
+function exportAllCustomTemplates() {
+  const names = Object.keys(customTemplates);
+  if (!names.length) { alert('No custom templates to export.'); return; }
+  const payload = { version: 1, exportedAt: Date.now(), templates: customTemplates };
+  download(JSON.stringify(payload, null, 2), 'emailbuilder-custom-templates.json', 'application/json');
+}
+
+function importCustomTemplates(input) {
+  const parsed = JSON.parse(input);
+  let entries = [];
+
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.templates && typeof parsed.templates === 'object') {
+    entries = Object.entries(parsed.templates);
+  } else if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.name && parsed.state) {
+    entries = [[parsed.name, parsed.state]];
+  }
+
+  if (!entries.length) throw new Error('Template file format is not supported.');
+
+  const valid = [];
+  entries.forEach(([rawName, state]) => {
+    const name = cleanTemplateName(rawName);
+    if (!name || BUILTIN_TEMPLATES[name]) return;
+    try {
+      const decoded = decodeStatePayload(state);
+      valid.push([name, { ...decoded, savedAt: Date.now() }]);
+    } catch {}
+  });
+
+  if (!valid.length) throw new Error('No valid custom templates were found in that file.');
+
+  const conflicts = valid.filter(([name]) => customTemplates[name]).map(([name]) => name);
+  let replaceConflicts = true;
+  if (conflicts.length) {
+    replaceConflicts = confirm(`${conflicts.length} template name conflict${conflicts.length > 1 ? 's' : ''} found. Replace existing templates?`);
+  }
+
+  let added = 0, replaced = 0, skipped = 0;
+  valid.forEach(([name, state]) => {
+    const exists = !!customTemplates[name];
+    if (exists && !replaceConflicts) { skipped++; return; }
+    customTemplates[name] = state;
+    exists ? replaced++ : added++;
+  });
+
+  writeCustomTemplates();
+  syncTemplateSelect();
+  renderTemplateManager();
+  alert(`Imported ${added + replaced} template${added + replaced === 1 ? '' : 's'} (${added} new, ${replaced} replaced${skipped ? `, ${skipped} skipped` : ''}).`);
+}
+
 function loadTemplate(templateId) {
   snap();
   if (templateId.startsWith('custom:')) {
     const name = templateId.slice(7);
     const saved = customTemplates[name];
     if (!saved) { alert('That custom template no longer exists.'); syncTemplateSelect(); return; }
-    restore(JSON.stringify(saved));
+    try {
+      restore(saved);
+    } catch {
+      alert(`Custom template "${name}" is invalid and was removed.`);
+      delete customTemplates[name];
+      writeCustomTemplates();
+      syncTemplateSelect();
+      renderTemplateManager();
+    }
     return;
   }
 
@@ -842,13 +1016,14 @@ function loadTemplate(templateId) {
 function saveCurrentTemplate() {
   const input = prompt('Template name');
   if (input == null) return;
-  const name = input.trim();
+  const name = cleanTemplateName(input);
   if (!name) { alert('Template name cannot be empty.'); return; }
   if (BUILTIN_TEMPLATES[name]) { alert('That name is reserved by a starter template.'); return; }
   if (customTemplates[name] && !confirm(`Replace custom template "${name}"?`)) return;
-  customTemplates[name] = JSON.parse(snapshot());
+  customTemplates[name] = statePayload();
   writeCustomTemplates();
   syncTemplateSelect();
+  renderTemplateManager();
 }
 
 const newBlock = t => ({ id: nid(), bg:'', pl:null, pr:null, ...DEFAULTS[t]() });
@@ -1245,6 +1420,13 @@ function syncTags() {
 /* ============================================================
    10. TOPBAR
    ============================================================ */
+function readTextFile(file, onDone) {
+  const r = new FileReader();
+  r.onload = () => onDone(String(r.result || ''));
+  r.onerror = () => alert('Could not read that file.');
+  r.readAsText(file);
+}
+
 syncTemplateSelect();
 $('tplSel').addEventListener('change', e => {
   if (!e.target.value) return;
@@ -1252,6 +1434,54 @@ $('tplSel').addEventListener('change', e => {
   e.target.selectedIndex = 0;
 });
 $('saveTplBtn').addEventListener('click', saveCurrentTemplate);
+$('manageTplBtn').addEventListener('click', () => {
+  renderTemplateManager();
+  $('tplModal').classList.add('open');
+});
+
+$('tplBody').addEventListener('click', e => {
+  const btn = e.target.closest('[data-tpla]');
+  if (!btn) return;
+  const action = btn.dataset.tpla;
+  const name = btn.dataset.name;
+  if (!name || !customTemplates[name]) return;
+
+  if (action === 'load') {
+    loadTemplate(`custom:${name}`);
+    $('tplModal').classList.remove('open');
+    return;
+  }
+
+  if (action === 'rename') {
+    const next = cleanTemplateName(prompt('New template name', name));
+    if (!next || next === name) return;
+    if (BUILTIN_TEMPLATES[next]) { alert('That name is reserved by a starter template.'); return; }
+    if (customTemplates[next] && !confirm(`Replace custom template "${next}"?`)) return;
+    customTemplates[next] = { ...customTemplates[name], savedAt: Date.now() };
+    delete customTemplates[name];
+    writeCustomTemplates();
+    syncTemplateSelect();
+    renderTemplateManager();
+    return;
+  }
+
+  if (action === 'delete') {
+    if (!confirm(`Delete custom template "${name}"?`)) return;
+    delete customTemplates[name];
+    writeCustomTemplates();
+    syncTemplateSelect();
+    renderTemplateManager();
+    return;
+  }
+
+  if (action === 'export') exportCustomTemplate(name);
+});
+
+$('tplSaveCurrentBtn').addEventListener('click', saveCurrentTemplate);
+$('tplImportBtn').addEventListener('click', () => $('tplFileIn').click());
+$('tplExportAllBtn').addEventListener('click', exportAllCustomTemplates);
+$('tplCloseBtn').addEventListener('click', () => $('tplModal').classList.remove('open'));
+$('tplModal').addEventListener('click', e => { if (e.target.id === 'tplModal') $('tplModal').classList.remove('open'); });
 
 $('viewSeg').addEventListener('click', e => {
   const btn = e.target.closest('button'); if (!btn) return;
@@ -1273,9 +1503,36 @@ $('saveBtn').addEventListener('click', () => download(JSON.stringify(statePayloa
 $('loadBtn').addEventListener('click', () => $('fileIn').click());
 $('fileIn').addEventListener('change', e => {
   const file = e.target.files[0]; if (!file) return;
-  const r = new FileReader();
-  r.onload = () => { try { snap(); restore(r.result); } catch { alert('That file is not a saved email document.'); } };
-  r.readAsText(file);
+  if (file.size > MAX_STATE_BYTES) {
+    alert(`State file is too large. Keep it under ${Math.round(MAX_STATE_BYTES/1024)} KB.`);
+    e.target.value = '';
+    return;
+  }
+  readTextFile(file, text => {
+    try {
+      snap();
+      restore(text);
+    } catch (err) {
+      alert(err?.message || 'That file is not a valid saved email document.');
+    }
+  });
+  e.target.value = '';
+});
+
+$('tplFileIn').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return;
+  if (file.size > MAX_TEMPLATE_IMPORT_BYTES) {
+    alert(`Template file is too large. Keep it under ${Math.round(MAX_TEMPLATE_IMPORT_BYTES/1024)} KB.`);
+    e.target.value = '';
+    return;
+  }
+  readTextFile(file, text => {
+    try {
+      importCustomTemplates(text);
+    } catch (err) {
+      alert(err?.message || 'That template file is not valid.');
+    }
+  });
   e.target.value = '';
 });
 
@@ -1365,7 +1622,7 @@ function textBody() {
         if (b.unsub || b.unsubHref) lines.push(`${b.unsub || 'Unsubscribe'}: ${b.unsubHref || ''}`.trim());
         break;
       case 'html':
-        if (b.raw) lines.push(htmlToText(b.raw));
+        if (b.raw) lines.push(htmlToText(sanitizeRawHtml(b.raw)));
         break;
     }
     if (i < doc.blocks.length - 1) lines.push('');
@@ -1415,7 +1672,11 @@ $('dlBtn').addEventListener('click', () => {
 });
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { $('modal').classList.remove('open'); $('fmt').style.display = 'none'; }
+  if (e.key === 'Escape') {
+    $('modal').classList.remove('open');
+    $('tplModal').classList.remove('open');
+    $('fmt').style.display = 'none';
+  }
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'z' && !e.target.isContentEditable && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'INPUT') {
     e.preventDefault(); e.shiftKey ? redo() : undo();
