@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EmailBuilder smoke tests</title>
+<style>
+  body {
+    margin: 0;
+    padding: 24px;
+    background: #0e1116;
+    color: #e2e8f0;
+    font-family: Consolas, "Courier New", monospace;
+  }
+  h1 {
+    margin: 0 0 10px;
+    font-size: 18px;
+  }
+  p {
+    margin: 0 0 14px;
+    color: #9aa7b7;
+    max-width: 860px;
+    line-height: 1.5;
+  }
+  button {
+    border: 1px solid #2b3441;
+    background: #1c232c;
+    color: #e2e8f0;
+    border-radius: 6px;
+    padding: 8px 12px;
+    cursor: pointer;
+  }
+  pre {
+    margin-top: 12px;
+    padding: 14px;
+    background: #11161d;
+    border: 1px solid #2b3441;
+    border-radius: 8px;
+    white-space: pre-wrap;
+    line-height: 1.55;
+    min-height: 220px;
+  }
+</style>
+</head>
+<body>
+  <h1>EmailBuilder smoke tests</h1>
+  <p>
+    This page runs quick checks for serializer output, text export generation,
+    critical check detection, and migration of legacy draft data.
+  </p>
+  <button id="runBtn">Run tests</button>
+  <pre id="log"></pre>
+  <iframe id="appFrame" src="../index.html?test=1" hidden></iframe>
+
+<script>
+const logEl = document.getElementById('log');
+const runBtn = document.getElementById('runBtn');
+const frame = document.getElementById('appFrame');
+
+function log(line) {
+  logEl.textContent += line + '\n';
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function makeState(blocks, settings = {}, uid = 1) {
+  return {
+    version: 2,
+    uid,
+    settings,
+    blocks
+  };
+}
+
+function waitForApp() {
+  return new Promise((resolve, reject) => {
+    const tryResolve = () => {
+      const cw = frame.contentWindow;
+      if (cw && typeof cw.restore === 'function' && typeof cw.bodyHtml === 'function') {
+        resolve(cw);
+        return true;
+      }
+      return false;
+    };
+
+    if (tryResolve()) return;
+
+    const onLoad = () => {
+      if (tryResolve()) {
+        frame.removeEventListener('load', onLoad);
+      }
+    };
+
+    frame.addEventListener('load', onLoad);
+    setTimeout(() => reject(new Error('Timed out waiting for app frame to load.')), 8000);
+  });
+}
+
+async function runTests() {
+  runBtn.disabled = true;
+  logEl.textContent = '';
+
+  try {
+    const app = await waitForApp();
+
+    const baseline = makeState([
+      { id: 'b1', type: 'heading', text: 'Unit Heading' },
+      { id: 'b2', type: 'button', label: 'Open app', href: 'https://example.com/go' },
+      { id: 'b3', type: 'footer', html: 'Team updates', unsub: 'Unsubscribe', unsubHref: 'https://example.com/unsub' }
+    ], { preheader: 'Test preheader' }, 3);
+
+    app.restore(JSON.stringify(baseline));
+    const html = app.bodyHtml();
+    assert(html.includes('Unit Heading'), 'HTML serializer missing heading content.');
+    assert(html.includes('https://example.com/go'), 'HTML serializer missing button URL.');
+    assert(html.includes('<v:roundrect'), 'Outlook VML button fallback is missing.');
+    log('PASS - HTML serializer and VML fallback');
+
+    const text = app.textBody();
+    assert(text.includes('Test preheader'), 'Text export missing preheader.');
+    assert(text.includes('Open app: https://example.com/go'), 'Text export missing button line.');
+    log('PASS - Plain-text export conversion');
+
+    const failing = makeState([
+      { id: 'b1', type: 'image', src: 'https://placehold.co/1200x600', alt: '' },
+      { id: 'b2', type: 'button', label: 'Broken CTA', href: 'https://' }
+    ], { preheader: '' }, 2);
+
+    app.restore(JSON.stringify(failing));
+    const checks = app.runChecks();
+    assert(checks.some(c => c.title === 'Images without alt text'), 'Checks should flag missing image alt text.');
+    assert(checks.some(c => c.title === 'Placeholder links'), 'Checks should flag placeholder links.');
+    assert(checks.some(c => c.title === 'No unsubscribe link'), 'Checks should flag missing unsubscribe.');
+    log('PASS - Critical check detection');
+
+    const legacy = {
+      settings: { preheader: 'Legacy preheader' },
+      blocks: [{ id: 'b1', type: 'text', html: 'Legacy body' }],
+      uid: 1
+    };
+
+    app.restore(JSON.stringify(legacy));
+    const legacyText = app.textBody();
+    assert(legacyText.includes('Legacy body'), 'Legacy state migration failed.');
+    log('PASS - Legacy draft migration');
+
+    log('SUCCESS - All smoke tests passed.');
+  } catch (err) {
+    log('FAIL - ' + err.message);
+    throw err;
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+
+runBtn.addEventListener('click', () => { runTests().catch(() => {}); });
+runTests().catch(() => {});
+</script>
+</body>
+</html>

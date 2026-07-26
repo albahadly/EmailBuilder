@@ -2,7 +2,7 @@
 
 EmailBuilder is a single-page visual editor for building email bodies and exporting table-based HTML that works across major email clients.
 
-Current version: v1.1
+Current version: v1.2
 
 ## Live URL
 
@@ -16,6 +16,8 @@ Current version: v1.1
 - Exports both HTML and plain-text versions of the email content.
 - Supports loading and saving JSON so email drafts can be versioned and reused.
 - Autosaves drafts in the browser and offers restore on next load.
+- Supports saving custom reusable templates locally from the current design.
+- Adds a critical issue confirmation gate before export/download.
 - Includes checks to help catch common email-client compatibility issues.
 
 ## Starter Templates
@@ -47,6 +49,14 @@ The Start from dropdown includes ready-made starters:
 3. Build your email with blocks and use Export to get HTML or plain text output.
 
 No build step or package install is required.
+
+## Smoke Tests
+
+Run lightweight browser tests from:
+
+- [tests/smoke-tests.html](tests/smoke-tests.html)
+
+The smoke suite validates HTML serialization, plain-text export, critical checks, and legacy draft migration.
 
 ## Deployment
 

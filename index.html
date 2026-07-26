@@ -129,6 +129,7 @@
   <div class="topbar">
     <div class="brand"><b>email/body</b><span class="ver" id="appVersion">v1.2</span><span>block → table serializer</span></div>
     <select class="btn" id="tplSel" title="Load a starter"><option value="">Start from…</option></select>
+    <button class="btn" id="saveTplBtn" title="Save current design as a reusable template">Save template</button>
     <button class="btn icon" id="undoBtn" title="Undo (Ctrl+Z)">↶</button>
     <button class="btn icon" id="redoBtn" title="Redo (Ctrl+Shift+Z)">↷</button>
     <div class="seg" id="viewSeg">
@@ -197,16 +198,21 @@ let uid = 0;
 const nid = () => 'b' + (++uid);
 const APP_VERSION = 'v1.2';
 const DRAFT_KEY = 'email_builder_draft_v1';
+const STATE_SCHEMA_VERSION = 2;
+const CUSTOM_TEMPLATES_KEY = 'email_builder_custom_templates_v1';
+const IS_TEST_MODE = new URLSearchParams(location.search).get('test') === '1';
+
+const DEFAULT_SETTINGS = {
+  width: 600, pad: 32, radius: 0,
+  pageBg: '#eef1f5', cardBg: '#ffffff',
+  font: 'Arial, Helvetica, sans-serif',
+  text: '#1f2933', link: '#0b6bcb',
+  dir: 'ltr', esp: 'handlebars',
+  preheader: 'Rule versioning, a faster evaluator, and the new visual builder.'
+};
 
 const doc = {
-  settings: {
-    width: 600, pad: 32, radius: 0,
-    pageBg: '#eef1f5', cardBg: '#ffffff',
-    font: 'Arial, Helvetica, sans-serif',
-    text: '#1f2933', link: '#0b6bcb',
-    dir: 'ltr', esp: 'handlebars',
-    preheader: 'Rule versioning, a faster evaluator, and the new visual builder.'
-  },
+  settings: { ...DEFAULT_SETTINGS },
   blocks: []
 };
 
@@ -381,16 +387,29 @@ function block(b, s, o = {}) {
 </tr>`;
 
   case 'button': {
-    const bd = px(b.borderW) ? `border:${px(b.borderW)}px solid ${b.borderC};` : '';
-    const btn = `<table ${PT} ${b.full ? 'width="100%" ' : ''}style="border-collapse:separate;${b.full ? 'width:100%;' : ''}">
+    const borderW = px(b.borderW);
+    const bd = borderW ? `border:${borderW}px solid ${b.borderC};` : '';
+    const h = Math.max(24, px(b.py) * 2 + px(b.size) + 4);
+    const arc = Math.max(0, Math.min(50, Math.round((px(b.radius) / h) * 100)));
+    const labelW = Math.max(120, Math.round(String(b.label || '').length * (px(b.size) * 0.62)));
+    const vmlW = b.full ? Math.max(120, inner) : labelW + px(b.px) * 2;
+    const stroke = borderW ? `strokecolor="${b.borderC}" strokeweight="${borderW}px"` : 'stroked="f"';
+    const mso = `<!--[if mso]>
+  <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="${esc(b.href)}" style="height:${h}px;v-text-anchor:middle;width:${vmlW}px;" arcsize="${arc}%" fillcolor="${b.bgc}" ${stroke}>
+  <center style="color:${b.color};font-family:${F};font-size:${px(b.size)}px;font-weight:bold;">${esc(b.label)}</center>
+  </v:roundrect>
+  <![endif]-->`;
+    const btn = `<!--[if !mso]><!-->
+  <table ${PT} ${b.full ? 'width="100%" ' : ''}style="border-collapse:separate;${b.full ? 'width:100%;' : ''}">
 <tr>
 <td align="center" bgcolor="${b.bgc}" style="border-radius:${px(b.radius)}px;${bd}padding:${px(b.py)}px ${px(b.px)}px;">
 <a href="${esc(b.href)}" target="_blank" style="display:block;font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.size)+4}px;font-weight:bold;color:${b.color};text-decoration:none;white-space:nowrap;">${esc(b.label)}</a>
 </td>
 </tr>
-</table>`;
+  </table>
+  <!--<![endif]-->`;
     return `<tr>
-<td align="${b.align}"${bgAttr(b)} style="padding:${P};${bgStyle(b)}">${btn}</td>
+  <td align="${b.align}"${bgAttr(b)} style="padding:${P};${bgStyle(b)}">${mso}${btn}</td>
 </tr>`;
   }
 
@@ -625,11 +644,105 @@ function runChecks() {
   return out;
 }
 
+const CRITICAL_EXPORT_TITLES = new Set([
+  'Images without alt text',
+  'Placeholder links',
+  'No unsubscribe link',
+  'Images served over http',
+  'SVG image found',
+  'Over the Gmail clip limit'
+]);
+
+function criticalExportFindings() {
+  return runChecks().filter(c => c.level === 'err' || CRITICAL_EXPORT_TITLES.has(c.title));
+}
+
+function confirmCriticalExport(actionLabel) {
+  const issues = criticalExportFindings();
+  if (!issues.length) return true;
+  const list = issues.map(i => `- ${i.title}`).join('\n');
+  return confirm(`Critical issues found before ${actionLabel}:\n${list}\n\nContinue anyway?`);
+}
+
 /* ============================================================
    4. HISTORY
    ============================================================ */
 const past = [], future = [];
-const snapshot = () => JSON.stringify({ settings: doc.settings, blocks: doc.blocks, uid });
+function normalizeSettings(input) {
+  const raw = input && typeof input === 'object' ? input : {};
+  const next = { ...DEFAULT_SETTINGS, ...raw };
+  next.width = Math.max(320, parseInt(next.width, 10) || DEFAULT_SETTINGS.width);
+  next.pad = Math.max(0, parseInt(next.pad, 10) || DEFAULT_SETTINGS.pad);
+  next.radius = Math.max(0, parseInt(next.radius, 10) || DEFAULT_SETTINGS.radius);
+  next.dir = next.dir === 'rtl' ? 'rtl' : 'ltr';
+  next.esp = ESP[next.esp] ? next.esp : DEFAULT_SETTINGS.esp;
+  ['pageBg','cardBg','font','text','link','preheader'].forEach(k => {
+    if (typeof next[k] !== 'string') next[k] = DEFAULT_SETTINGS[k];
+  });
+  return next;
+}
+
+function normalizeBlocks(input) {
+  const source = Array.isArray(input) ? input : [];
+  const used = new Set();
+  const out = [];
+
+  source.forEach(raw => {
+    if (!raw || typeof raw !== 'object' || !DEFAULTS[raw.type]) return;
+    const merged = { id: '', bg:'', pl:null, pr:null, ...DEFAULTS[raw.type](), ...raw };
+    if (typeof merged.id !== 'string' || !merged.id.trim() || used.has(merged.id)) merged.id = nid();
+    used.add(merged.id);
+
+    if (merged.type === 'columns' && !Array.isArray(merged.cols)) merged.cols = DEFAULTS.columns().cols;
+    if (merged.type === 'list' && !Array.isArray(merged.items)) merged.items = DEFAULTS.list().items;
+    if (merged.type === 'links' && !Array.isArray(merged.items)) merged.items = DEFAULTS.links().items;
+
+    out.push(merged);
+  });
+
+  return out;
+}
+
+function decodeStatePayload(input) {
+  const parsed = typeof input === 'string' ? JSON.parse(input) : input;
+  if (!parsed || typeof parsed !== 'object') throw new Error('Invalid state payload.');
+
+  let state = parsed;
+  if (state.version == null) {
+    state = { version: 1, settings: state.settings, blocks: state.blocks, uid: state.uid };
+  }
+  if (state.version === 1) {
+    state = { version: STATE_SCHEMA_VERSION, settings: state.settings, blocks: state.blocks, uid: state.uid };
+  }
+  if (state.version !== STATE_SCHEMA_VERSION) throw new Error(`Unsupported schema version: ${state.version}`);
+
+  const settings = normalizeSettings(state.settings);
+  const blocks = normalizeBlocks(state.blocks);
+  const inferredUid = blocks.reduce((max, b) => {
+    const m = /^b(\d+)$/.exec(b.id);
+    return m ? Math.max(max, parseInt(m[1], 10)) : max;
+  }, 0);
+  const stateUid = Math.max(0, parseInt(state.uid, 10) || 0);
+
+  return {
+    version: STATE_SCHEMA_VERSION,
+    settings,
+    blocks,
+    uid: Math.max(inferredUid, stateUid)
+  };
+}
+
+function statePayload() {
+  return {
+    version: STATE_SCHEMA_VERSION,
+    settings: doc.settings,
+    blocks: doc.blocks,
+    uid,
+    savedAt: Date.now()
+  };
+}
+
+const snapshot = () => JSON.stringify(statePayload());
 let draftTimer = 0;
 function saveDraft() {
   try { localStorage.setItem(DRAFT_KEY, snapshot()); } catch {}
@@ -643,7 +756,7 @@ function readDraft() {
 }
 function snap() { past.push(snapshot()); if (past.length > 60) past.shift(); future.length = 0; syncHistory(); }
 function restore(json) {
-  const d = JSON.parse(json);
+  const d = decodeStatePayload(json);
   doc.settings = d.settings; doc.blocks = d.blocks; uid = d.uid || uid;
   if (!doc.blocks.some(b => b.id === sel)) sel = null;
   render();
@@ -655,7 +768,7 @@ function syncHistory() { $('undoBtn').disabled = !past.length; $('redoBtn').disa
 /* ============================================================
    5. TEMPLATES
    ============================================================ */
-const TEMPLATES = {
+const BUILTIN_TEMPLATES = {
   'Product update': ['logo','image','heading','text','button','divider','columns','footer'],
   'Plain announcement': ['heading','text','list','button','divider','footer'],
   'Transactional receipt': ['logo','heading','text','table','divider','text','footer'],
@@ -671,12 +784,73 @@ const TEMPLATES = {
   'Blank': []
 };
 
-function loadTemplate(name) {
+function readCustomTemplates() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_TEMPLATES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out = {};
+    Object.entries(parsed).forEach(([name, state]) => {
+      if (typeof name !== 'string' || !name.trim()) return;
+      if (!state || typeof state !== 'object') return;
+      out[name] = state;
+    });
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeCustomTemplates() {
+  try { localStorage.setItem(CUSTOM_TEMPLATES_KEY, JSON.stringify(customTemplates)); } catch {}
+}
+
+let customTemplates = readCustomTemplates();
+
+function syncTemplateSelect() {
+  const starter = Object.keys(BUILTIN_TEMPLATES).map(name => ({
+    value: `builtin:${name}`,
+    label: name
+  }));
+  const custom = Object.keys(customTemplates).sort((a,b) => a.localeCompare(b)).map(name => ({
+    value: `custom:${name}`,
+    label: `${name} (custom)`
+  }));
+  const all = starter.concat(custom);
+  $('tplSel').innerHTML = '<option value="">Start from…</option>'
+    + all.map(t => `<option value="${esc(t.value)}">${esc(t.label)}</option>`).join('');
+}
+
+function loadTemplate(templateId) {
   snap();
-  doc.blocks = TEMPLATES[name].map(t => newBlock(t));
+  if (templateId.startsWith('custom:')) {
+    const name = templateId.slice(7);
+    const saved = customTemplates[name];
+    if (!saved) { alert('That custom template no longer exists.'); syncTemplateSelect(); return; }
+    restore(JSON.stringify(saved));
+    return;
+  }
+
+  const name = templateId.startsWith('builtin:') ? templateId.slice(8) : templateId;
+  if (!BUILTIN_TEMPLATES[name]) return;
+  doc.blocks = BUILTIN_TEMPLATES[name].map(t => newBlock(t));
   sel = null;
   render();
 }
+
+function saveCurrentTemplate() {
+  const input = prompt('Template name');
+  if (input == null) return;
+  const name = input.trim();
+  if (!name) { alert('Template name cannot be empty.'); return; }
+  if (BUILTIN_TEMPLATES[name]) { alert('That name is reserved by a starter template.'); return; }
+  if (customTemplates[name] && !confirm(`Replace custom template "${name}"?`)) return;
+  customTemplates[name] = JSON.parse(snapshot());
+  writeCustomTemplates();
+  syncTemplateSelect();
+}
+
 const newBlock = t => ({ id: nid(), bg:'', pl:null, pr:null, ...DEFAULTS[t]() });
 
 /* ============================================================
@@ -1071,13 +1245,13 @@ function syncTags() {
 /* ============================================================
    10. TOPBAR
    ============================================================ */
-$('tplSel').innerHTML = '<option value="">Start from…</option>'
-  + Object.keys(TEMPLATES).map(k => `<option value="${k}">${k}</option>`).join('');
+syncTemplateSelect();
 $('tplSel').addEventListener('change', e => {
   if (!e.target.value) return;
   loadTemplate(e.target.value);
   e.target.selectedIndex = 0;
 });
+$('saveTplBtn').addEventListener('click', saveCurrentTemplate);
 
 $('viewSeg').addEventListener('click', e => {
   const btn = e.target.closest('button'); if (!btn) return;
@@ -1095,7 +1269,7 @@ $('darkBtn').addEventListener('click', e => {
 $('undoBtn').addEventListener('click', undo);
 $('redoBtn').addEventListener('click', redo);
 
-$('saveBtn').addEventListener('click', () => download(JSON.stringify({ settings:doc.settings, blocks:doc.blocks, uid }, null, 2), 'email.json', 'application/json'));
+$('saveBtn').addEventListener('click', () => download(JSON.stringify(statePayload(), null, 2), 'email.json', 'application/json'));
 $('loadBtn').addEventListener('click', () => $('fileIn').click());
 $('fileIn').addEventListener('change', e => {
   const file = e.target.files[0]; if (!file) return;
@@ -1217,7 +1391,11 @@ function renderExport() {
   $('sizeBar').style.width = pct + '%';
   $('sizeBar').classList.toggle('warn', !textMode && pct > 70);
 }
-$('exportBtn').addEventListener('click', () => { $('modal').classList.add('open'); renderExport(); });
+$('exportBtn').addEventListener('click', () => {
+  if (!confirmCriticalExport('export')) return;
+  $('modal').classList.add('open');
+  renderExport();
+});
 $('closeBtn').addEventListener('click', () => $('modal').classList.remove('open'));
 $('modal').addEventListener('click', e => { if (e.target.id === 'modal') $('modal').classList.remove('open'); });
 $('modeSeg').addEventListener('click', e => {
@@ -1231,6 +1409,7 @@ $('copyBtn').addEventListener('click', async e => {
   e.target.textContent = 'Copied'; setTimeout(() => e.target.textContent = 'Copy', 1400);
 });
 $('dlBtn').addEventListener('click', () => {
+  if (!confirmCriticalExport('download')) return;
   if (mode === 'text') { download($('code').textContent, 'email.txt', 'text/plain'); return; }
   download($('code').textContent, mode === 'body' ? 'email-body.html' : 'email.html', 'text/html');
 });
@@ -1249,18 +1428,29 @@ document.addEventListener('keydown', e => {
 function render() { renderCanvas(); renderInspector(); syncTags(); flagChecks(); syncHistory(); }
 
 $('appVersion').textContent = APP_VERSION;
-const savedDraft = readDraft();
-if (savedDraft) {
-  try {
-    if (confirm('Restore your last draft?')) restore(savedDraft);
-    else { doc.blocks = TEMPLATES['Product update'].map(t => newBlock(t)); render(); }
-  } catch {
-    doc.blocks = TEMPLATES['Product update'].map(t => newBlock(t));
+function loadStarterTemplate() {
+  doc.settings = { ...DEFAULT_SETTINGS };
+  doc.blocks = BUILTIN_TEMPLATES['Product update'].map(t => newBlock(t));
+}
+
+if (IS_TEST_MODE) {
+  loadStarterTemplate();
+  render();
+} else {
+  const savedDraft = readDraft();
+  if (savedDraft) {
+    try {
+      if (confirm('Restore your last draft?')) restore(savedDraft);
+      else { loadStarterTemplate(); render(); }
+    } catch {
+      try { localStorage.removeItem(DRAFT_KEY); } catch {}
+      loadStarterTemplate();
+      render();
+    }
+  } else {
+    loadStarterTemplate();
     render();
   }
-} else {
-  doc.blocks = TEMPLATES['Product update'].map(t => newBlock(t));
-  render();
 }
 window.addEventListener('beforeunload', saveDraft);
 </script>
