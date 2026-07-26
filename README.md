@@ -6,7 +6,7 @@ Current version: v1.5
 
 ## Live URL
 
-- [https://albahadly.github.io/EmailBuilder](https://albahadly.github.io/emailbuilder)
+- [https://albahadly.github.io/emailbuilder](https://albahadly.github.io/emailbuilder)
 
 ## What This Project Does
 
