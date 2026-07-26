@@ -127,7 +127,7 @@
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><b>email/body</b><span class="ver" id="appVersion">v1.1</span><span>block → table serializer</span></div>
+    <div class="brand"><b>email/body</b><span class="ver" id="appVersion">v1.2</span><span>block → table serializer</span></div>
     <select class="btn" id="tplSel" title="Load a starter"><option value="">Start from…</option></select>
     <button class="btn icon" id="undoBtn" title="Undo (Ctrl+Z)">↶</button>
     <button class="btn icon" id="redoBtn" title="Redo (Ctrl+Shift+Z)">↷</button>
@@ -169,10 +169,11 @@
 <div class="modal" id="modal">
   <div class="sheet">
     <header>
-      <span class="eyebrow">Generated markup</span>
+      <span class="eyebrow">Generated output</span>
       <div class="seg" id="modeSeg">
         <button data-mode="body" class="on">body only</button>
         <button data-mode="full">full document</button>
+        <button data-mode="text">plain text</button>
       </div>
       <button class="btn" id="minBtn" title="Strip newlines and indentation">minify</button>
       <button class="btn" id="copyBtn">Copy</button>
@@ -194,7 +195,8 @@
    ============================================================ */
 let uid = 0;
 const nid = () => 'b' + (++uid);
-const APP_VERSION = 'v1.1';
+const APP_VERSION = 'v1.2';
+const DRAFT_KEY = 'email_builder_draft_v1';
 
 const doc = {
   settings: {
@@ -628,6 +630,17 @@ function runChecks() {
    ============================================================ */
 const past = [], future = [];
 const snapshot = () => JSON.stringify({ settings: doc.settings, blocks: doc.blocks, uid });
+let draftTimer = 0;
+function saveDraft() {
+  try { localStorage.setItem(DRAFT_KEY, snapshot()); } catch {}
+}
+function queueDraftSave() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(saveDraft, 180);
+}
+function readDraft() {
+  try { return localStorage.getItem(DRAFT_KEY); } catch { return null; }
+}
 function snap() { past.push(snapshot()); if (past.length > 60) past.shift(); future.length = 0; syncHistory(); }
 function restore(json) {
   const d = JSON.parse(json);
@@ -939,6 +952,7 @@ function renderChecks() {
 function flagChecks() {
   const bad = runChecks().some(c => c.level !== 'ok');
   $('tabDot').hidden = !bad;
+  queueDraftSave();
 }
 
 /* inspector input handling */
@@ -1101,16 +1115,107 @@ function download(content, name, type) {
 /* ============================================================
    11. EXPORT
    ============================================================ */
+function htmlToText(html) {
+  const root = document.createElement('div');
+  root.innerHTML = html;
+  root.querySelectorAll('br').forEach(n => n.replaceWith('\n'));
+  root.querySelectorAll('p,div,h1,h2,h3,h4,h5,h6,li,tr').forEach(n => n.append('\n'));
+  return root.textContent
+    .replace(/\u200C/g, '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function textBody() {
+  const lines = [];
+  const pre = String(doc.settings.preheader || '').trim();
+  if (pre) lines.push(pre, '');
+
+  doc.blocks.forEach((b, i) => {
+    switch (b.type) {
+      case 'logo':
+        if (b.alt) lines.push(`[Logo] ${b.alt}`);
+        if (b.href) lines.push(`Website: ${b.href}`);
+        break;
+      case 'heading':
+        if (b.text) lines.push(String(b.text).trim());
+        break;
+      case 'text':
+        if (b.html) lines.push(htmlToText(b.html));
+        break;
+      case 'button':
+        lines.push(`${b.label || 'Action'}: ${b.href || ''}`.trim());
+        break;
+      case 'image':
+        if (b.alt) lines.push(`[Image] ${b.alt}`);
+        if (b.caption) lines.push(String(b.caption).trim());
+        break;
+      case 'columns':
+        (b.cols || []).forEach(c => { if (c.html) lines.push(htmlToText(c.html)); });
+        break;
+      case 'feature':
+        if (b.title) lines.push(String(b.title).trim());
+        if (b.html) lines.push(htmlToText(b.html));
+        if (b.linkLabel || b.linkHref) lines.push(`${b.linkLabel || 'Link'}: ${b.linkHref || ''}`.trim());
+        break;
+      case 'list':
+        (b.items || []).forEach((item, n) => lines.push(`${b.ordered ? `${n + 1}.` : '-'} ${htmlToText(item)}`));
+        break;
+      case 'quote':
+        if (b.html) lines.push(htmlToText(b.html));
+        if (b.cite) lines.push(String(b.cite).trim());
+        break;
+      case 'table': {
+        const rows = String(b.data || '').split('\n')
+          .map(r => r.split('|').map(c => c.trim()).filter(Boolean))
+          .filter(r => r.length);
+        rows.forEach((row, idx) => {
+          lines.push(row.join(' | '));
+          if (idx === 0 && b.header) lines.push('-'.repeat(Math.min(60, row.join(' | ').length)));
+        });
+        break;
+      }
+      case 'links':
+        (b.items || []).forEach(it => lines.push(`${it.label || 'Link'}: ${it.href || ''}`.trim()));
+        break;
+      case 'divider':
+        lines.push('---');
+        break;
+      case 'spacer':
+        lines.push('');
+        break;
+      case 'footer':
+        if (b.html) lines.push(htmlToText(b.html));
+        if (b.unsub || b.unsubHref) lines.push(`${b.unsub || 'Unsubscribe'}: ${b.unsubHref || ''}`.trim());
+        break;
+      case 'html':
+        if (b.raw) lines.push(htmlToText(b.raw));
+        break;
+    }
+    if (i < doc.blocks.length - 1) lines.push('');
+  });
+
+  return lines
+    .map(s => String(s || '').trimEnd())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 let mode = 'body', minified = false;
 function renderExport() {
-  let html = mode === 'body' ? bodyHtml() : fullHtml();
-  if (minified) html = html.replace(/\n\s*/g,'').replace(/>\s+</g,'><');
-  $('code').textContent = html;
-  const bytes = new Blob([html]).size;
-  $('sizeLabel').textContent = (bytes/1024).toFixed(1) + ' KB';
-  const pct = Math.min(100, bytes/102400*100);
+  const textMode = mode === 'text';
+  $('minBtn').disabled = textMode;
+  let output = mode === 'body' ? bodyHtml() : mode === 'full' ? fullHtml() : textBody();
+  if (!textMode && minified) output = output.replace(/\n\s*/g,'').replace(/>\s+</g,'><');
+  $('code').textContent = output;
+  const bytes = new Blob([output]).size;
+  $('sizeLabel').textContent = (bytes/1024).toFixed(1) + (textMode ? ' KB text' : ' KB');
+  const pct = textMode ? 0 : Math.min(100, bytes/102400*100);
   $('sizeBar').style.width = pct + '%';
-  $('sizeBar').classList.toggle('warn', pct > 70);
+  $('sizeBar').classList.toggle('warn', !textMode && pct > 70);
 }
 $('exportBtn').addEventListener('click', () => { $('modal').classList.add('open'); renderExport(); });
 $('closeBtn').addEventListener('click', () => $('modal').classList.remove('open'));
@@ -1125,7 +1230,10 @@ $('copyBtn').addEventListener('click', async e => {
   await navigator.clipboard.writeText($('code').textContent);
   e.target.textContent = 'Copied'; setTimeout(() => e.target.textContent = 'Copy', 1400);
 });
-$('dlBtn').addEventListener('click', () => download($('code').textContent, mode === 'body' ? 'email-body.html' : 'email.html', 'text/html'));
+$('dlBtn').addEventListener('click', () => {
+  if (mode === 'text') { download($('code').textContent, 'email.txt', 'text/plain'); return; }
+  download($('code').textContent, mode === 'body' ? 'email-body.html' : 'email.html', 'text/html');
+});
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { $('modal').classList.remove('open'); $('fmt').style.display = 'none'; }
@@ -1141,8 +1249,20 @@ document.addEventListener('keydown', e => {
 function render() { renderCanvas(); renderInspector(); syncTags(); flagChecks(); syncHistory(); }
 
 $('appVersion').textContent = APP_VERSION;
-doc.blocks = TEMPLATES['Product update'].map(t => newBlock(t));
-render();
+const savedDraft = readDraft();
+if (savedDraft) {
+  try {
+    if (confirm('Restore your last draft?')) restore(savedDraft);
+    else { doc.blocks = TEMPLATES['Product update'].map(t => newBlock(t)); render(); }
+  } catch {
+    doc.blocks = TEMPLATES['Product update'].map(t => newBlock(t));
+    render();
+  }
+} else {
+  doc.blocks = TEMPLATES['Product update'].map(t => newBlock(t));
+  render();
+}
+window.addEventListener('beforeunload', saveDraft);
 </script>
 </body>
 </html>
