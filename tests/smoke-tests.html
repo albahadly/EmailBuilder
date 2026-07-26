@@ -107,9 +107,10 @@ async function runTests() {
 
     const baseline = makeState([
       { id: 'b1', type: 'heading', text: 'Unit Heading' },
-      { id: 'b2', type: 'button', label: 'Open app', href: 'https://example.com/go' },
-      { id: 'b3', type: 'footer', html: 'Team updates', unsub: 'Unsubscribe', unsubHref: 'https://example.com/unsub' }
-    ], { preheader: 'Test preheader' }, 3);
+      { id: 'b2', type: 'text', html: 'Read the <a href="https://example.com/docs">documentation</a> before rollout.' },
+      { id: 'b3', type: 'button', label: 'Open app', href: 'https://example.com/go' },
+      { id: 'b4', type: 'footer', html: 'Team updates', unsub: 'Unsubscribe', unsubHref: 'https://example.com/unsub' }
+    ], { preheader: 'Test preheader' }, 4);
 
     app.restore(JSON.stringify(baseline));
     const html = app.bodyHtml();
@@ -120,6 +121,7 @@ async function runTests() {
 
     const text = app.textBody();
     assert(text.includes('Test preheader'), 'Text export missing preheader.');
+    assert(text.includes('documentation (https://example.com/docs)'), 'Text export should preserve rich-text link URLs.');
     assert(text.includes('Open app: https://example.com/go'), 'Text export missing button line.');
     log('PASS - Plain-text export conversion');
 
