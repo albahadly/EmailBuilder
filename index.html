@@ -22,6 +22,7 @@
   .brand{display:flex;align-items:baseline;gap:8px;margin-right:auto}
   .brand b{font-family:var(--mono);font-size:13px;font-weight:600;letter-spacing:-.01em}
   .brand span{font-family:var(--mono);font-size:10px;color:var(--muted)}
+  .brand .ver{color:var(--accent);border:1px solid var(--line);padding:1px 6px;border-radius:999px;line-height:1.5}
 
   .btn{background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:6px 11px;cursor:pointer;font-size:12px;line-height:1.4;transition:background .12s,border-color .12s}
   .btn:hover{background:var(--panel-3);border-color:#3a4553}
@@ -120,7 +121,7 @@
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><b>email/body</b><span>block → table serializer</span></div>
+    <div class="brand"><b>email/body</b><span class="ver" id="appVersion">v1.1</span><span>block → table serializer</span></div>
     <select class="btn" id="tplSel" title="Load a starter"><option value="">Start from…</option></select>
     <button class="btn icon" id="undoBtn" title="Undo (Ctrl+Z)">↶</button>
     <button class="btn icon" id="redoBtn" title="Redo (Ctrl+Shift+Z)">↷</button>
@@ -187,6 +188,7 @@
    ============================================================ */
 let uid = 0;
 const nid = () => 'b' + (++uid);
+const APP_VERSION = 'v1.1';
 
 const doc = {
   settings: {
@@ -639,6 +641,14 @@ const TEMPLATES = {
   'Plain announcement': ['heading','text','list','button','divider','footer'],
   'Transactional receipt': ['logo','heading','text','table','divider','text','footer'],
   'Newsletter digest': ['logo','heading','text','feature','divider','feature','divider','quote','links','footer'],
+  'Welcome email': ['logo','heading','text','button','feature','divider','quote','footer'],
+  'Event invitation': ['logo','image','heading','text','list','button','divider','links','footer'],
+  'Abandoned cart reminder': ['logo','heading','text','image','table','button','divider','footer'],
+  'Onboarding checklist': ['logo','heading','text','list','feature','button','divider','footer'],
+  'Webinar follow-up': ['logo','heading','text','button','divider','quote','text','links','footer'],
+  'Seasonal promotion': ['logo','image','heading','text','button','columns','divider','links','footer'],
+  'Customer feedback request': ['logo','heading','text','button','divider','quote','footer'],
+  'Win-back campaign': ['logo','heading','text','feature','button','divider','list','footer'],
   'Blank': []
 };
 
@@ -1124,6 +1134,7 @@ document.addEventListener('keydown', e => {
    ============================================================ */
 function render() { renderCanvas(); renderInspector(); syncTags(); flagChecks(); syncHistory(); }
 
+$('appVersion').textContent = APP_VERSION;
 doc.blocks = TEMPLATES['Product update'].map(t => newBlock(t));
 render();
 </script>

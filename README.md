@@ -2,6 +2,8 @@
 
 EmailBuilder is a single-page visual editor for building email bodies and exporting table-based HTML that works across major email clients.
 
+Current version: v1.1
+
 ## Live URL
 
 - [https://albahadly.github.io/EmailBuilder](https://albahadly.github.io/EmailBuilder)
@@ -13,6 +15,24 @@ EmailBuilder is a single-page visual editor for building email bodies and export
 - Exports clean email HTML for sending through ESPs.
 - Supports loading and saving JSON so email drafts can be versioned and reused.
 - Includes checks to help catch common email-client compatibility issues.
+
+## Starter Templates
+
+The Start from dropdown includes ready-made starters:
+
+- Product update
+- Plain announcement
+- Transactional receipt
+- Newsletter digest
+- Welcome email
+- Event invitation
+- Abandoned cart reminder
+- Onboarding checklist
+- Webinar follow-up
+- Seasonal promotion
+- Customer feedback request
+- Win-back campaign
+- Blank
 
 ## Main File
 
