@@ -58,6 +58,13 @@
   .seg button.on{background:var(--panel-3);color:var(--accent)}
   select.btn{padding-right:6px}
 
+  /* Topbar grouping: separators keep the preview toggles (which change how the
+     canvas is displayed) visually apart from the editor theme toggle. */
+  .tbsep{flex:0 0 1px;width:1px;height:20px;background:var(--line)}
+  .tbgrp{display:flex;align-items:center;gap:8px}
+  .tblabel{font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .themetgl{font-size:13px;line-height:1.15}
+
   .main{display:flex;flex:1;min-height:0}
 
   .palette{flex:0 0 180px;background:var(--panel);border-right:1px solid var(--line);padding:14px 12px 40px;overflow-y:auto}
@@ -153,6 +160,7 @@
   .askfoot{display:flex;justify-content:flex-end;gap:8px;padding:12px 14px;border-top:1px solid var(--line);background:var(--panel)}
   .btn.danger{background:var(--danger);border-color:var(--danger);color:var(--danger-ink);font-weight:600}
 
+  @media (max-width:1240px){.tblabel{display:none}}
   @media (max-width:980px){.palette{flex:0 0 150px}.inspector{flex:0 0 236px}}
   @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 
@@ -174,22 +182,30 @@
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><b>email/body</b><span class="ver" id="appVersion">v1.6</span><span>block → table serializer</span></div>
+    <div class="brand"><b>email/body</b><span class="ver" id="appVersion"></span><span>block → table serializer</span></div>
     <select class="btn" id="tplSel" title="Load a starter"><option value="">Start from…</option></select>
     <button class="btn" id="saveTplBtn" title="Save current design as a reusable template">Save template</button>
     <button class="btn" id="manageTplBtn" title="Manage saved custom templates">Manage templates</button>
     <button class="btn icon" id="undoBtn" title="Undo (Ctrl+Z)">↶</button>
     <button class="btn icon" id="redoBtn" title="Redo (Ctrl+Shift+Z)">↷</button>
-    <button class="btn" id="themeBtn" title="Switch the editor between light and dark" aria-pressed="false">theme</button>
-    <div class="seg" id="viewSeg">
-      <button data-w="0" class="on">desktop</button>
-      <button data-w="375">mobile</button>
-    </div>
-    <button class="btn" id="darkBtn" title="Approximate forced dark mode">dark</button>
-    <button class="btn" id="xrayBtn">x-ray</button>
+
+    <span class="tbsep" aria-hidden="true"></span>
+    <span class="tbgrp" id="previewGrp">
+      <span class="tblabel">preview</span>
+      <div class="seg" id="viewSeg">
+        <button data-w="0" class="on">desktop</button>
+        <button data-w="375">mobile</button>
+      </div>
+      <button class="btn" id="darkBtn" title="Preview the email as a forced-dark client renders it. Does not change the exported HTML.">dark client</button>
+      <button class="btn" id="xrayBtn" title="Outline the generated tables and cells">x-ray</button>
+    </span>
+
+    <span class="tbsep" aria-hidden="true"></span>
     <button class="btn" id="loadBtn">Open JSON</button>
     <button class="btn" id="saveBtn">Save JSON</button>
     <button class="btn primary" id="exportBtn">Export HTML</button>
+    <span class="tbsep" aria-hidden="true"></span>
+    <button class="btn icon themetgl" id="themeBtn" title="Editor theme" aria-label="Editor theme"></button>
     <input type="file" id="fileIn" accept="application/json" hidden>
     <input type="file" id="tplFileIn" accept="application/json" hidden>
   </div>
@@ -273,6 +289,8 @@
    ============================================================ */
 let uid = 0;
 const nid = () => 'b' + (++uid);
+/* Single source of truth for the version. Rendered into the topbar badge on
+   boot; the README carries its own copy that has to be bumped by hand. */
 const APP_VERSION = 'v1.6';
 const DRAFT_KEY = 'email_builder_draft_v1';
 const STATE_SCHEMA_VERSION = 2;
@@ -1872,8 +1890,11 @@ const themeBtn = $('themeBtn');
 function applyTheme(mode, persist) {
   const theme = mode === 'light' ? 'light' : 'dark';
   document.documentElement.dataset.theme = theme;
-  themeBtn.textContent = theme === 'light' ? '☀ light' : '☾ dark';
-  themeBtn.setAttribute('aria-pressed', theme === 'light' ? 'true' : 'false');
+  /* Label shows the theme you would switch *to*, so the icon reads as an action. */
+  themeBtn.textContent = theme === 'light' ? '☾' : '☀';
+  const label = theme === 'light' ? 'Switch editor to dark theme' : 'Switch editor to light theme';
+  themeBtn.title = label;
+  themeBtn.setAttribute('aria-label', label);
   if (persist) { try { localStorage.setItem(THEME_KEY, theme); } catch {} }
 }
 function storedTheme() {
