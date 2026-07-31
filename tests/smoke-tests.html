@@ -191,6 +191,125 @@ async function runTests() {
     assert(legacyText.includes('Legacy body'), 'Legacy state migration failed.');
     log('PASS - Legacy draft migration');
 
+    // --- Rich-text sanitizer -------------------------------------------------
+    const link = { link: '#0b6bcb' };
+    assert(!app.sanitize('<font><a href="javascript:alert(1)" onclick="alert(2)">x</a></font>', link).includes('javascript:'),
+      'Sanitizer must not let a javascript: URL through an unwrapped parent.');
+    assert(!app.sanitize('<font><a href="#" onclick="alert(2)">x</a></font>', link).includes('onclick'),
+      'Sanitizer must not let an event handler through an unwrapped parent.');
+    assert(!app.sanitize('<a href="&#106;avascript:alert(1)">x</a>', link).includes('javascript:'),
+      'Sanitizer must reject entity-obfuscated javascript: URLs.');
+    assert(!app.sanitize('<a href="vbscript:x">a</a>', link).includes('vbscript:'),
+      'Sanitizer must reject vbscript: URLs.');
+    const kept = app.sanitize('<a href="https://example.com/a?b=1">h</a><a href="mailto:a@b.c">m</a><a href="{{link_url}}">t</a>', link);
+    assert(kept.includes('https://example.com/a?b=1') && kept.includes('mailto:a@b.c') && kept.includes('{{link_url}}'),
+      'Sanitizer must keep http(s), mailto and merge-tag URLs.');
+    const pasted = app.sanitize('before<table><tr><td>c1</td><td>c2</td></tr><tr><td>c3</td></tr></table>after', link);
+    assert(!/<t(able|body|r|d)/i.test(pasted), 'Pasted table markup must not survive inside a text cell.');
+    assert(/c1 c2/.test(pasted) && /c3/.test(pasted), 'Pasted table cell text must be preserved and separated.');
+    assert(app.sanitize('<b>b</b><i>i</i><br><div>d</div>', link) === '<strong>b</strong><em>i</em><br><p style="margin:0 0 14px;">d</p>',
+      'Sanitizer must keep the supported formatting tags.');
+    log('PASS - Rich-text sanitizer hardening');
+
+    // --- Raw HTML block ------------------------------------------------------
+    const rawOut = app.sanitizeRawHtml('<style>a{b:c}</style><base href="http://evil/"><a href="data:text/html,x">d</a><p onclick="x">keep</p>');
+    assert(!rawOut.includes('<style') && !rawOut.includes('<base'), 'Raw block must drop <style> and <base>.');
+    assert(!rawOut.includes('data:') && !rawOut.includes('onclick'), 'Raw block must drop data: URLs and handlers.');
+    assert(rawOut.includes('keep'), 'Raw block must keep safe content.');
+    assert(app.sanitizeRawHtml('<tr><td>row</td></tr>').includes('<tr>'), 'Raw block must preserve ESP table fragments.');
+    assert(!app.rawHtmlWasStripped('<p>unclosed'), 'Parser tidy-ups must not read as an unsafe strip.');
+    assert(app.rawHtmlWasStripped('<scr' + 'ipt>x</scr' + 'ipt>'), 'A genuine strip must be reported.');
+    log('PASS - Raw HTML block hardening');
+
+    // --- Outlook table resets ------------------------------------------------
+    app.restore(JSON.stringify(makeState([
+      { id: 'b1', type: 'columns' }, { id: 'b2', type: 'list' }, { id: 'b3', type: 'quote' },
+      { id: 'b4', type: 'table' }, { id: 'b5', type: 'divider' }, { id: 'b6', type: 'button' }
+    ], {}, 6)));
+    const tags = app.bodyHtml().match(/<table[^>]*>/g) || [];
+    assert(tags.length > 0, 'Expected tables in the serialized output.');
+    assert(tags.every(t => /border-collapse/.test(t)), 'Every table needs an inline border-collapse.');
+    assert(tags.every(t => /mso-table-lspace:0pt/.test(t)), 'Every table needs inline mso-table-lspace/rspace.');
+    assert(tags.every(t => (t.match(/ style=/g) || []).length === 1), 'Tables must not carry two style attributes.');
+    log('PASS - Inline Outlook table resets');
+
+    // --- Full document head --------------------------------------------------
+    app.restore(JSON.stringify(makeState([{ id: 'b1', type: 'text' }], { lang: 'ar', dir: 'rtl' }, 1)));
+    const head = app.fullHtml();
+    assert(/<html[^>]*lang="ar"/.test(head), 'Full document must carry the configured lang.');
+    assert(head.includes('-ms-text-size-adjust:100%'), 'Full document should set -ms-text-size-adjust.');
+    assert(head.includes('prefers-color-scheme: dark') && head.includes('[data-ogsc] .eb-card'),
+      'Full document needs dark-mode overrides for both engines.');
+    assert(app.bodyHtml().includes('class="eb-page"') && app.bodyHtml().includes('class="eb-card"'),
+      'Wrappers need the hooks the dark-mode rules target.');
+    log('PASS - Full document head and dark mode');
+
+    // --- Block background and ragged tables ----------------------------------
+    app.restore(JSON.stringify(makeState([{ id: 'b1', type: 'quote', bg: '#ff0000' }], {}, 1)));
+    assert(app.bodyHtml().includes('bgcolor="#ff0000"'), 'Quote block must honour its background.');
+    app.restore(JSON.stringify(makeState([{ id: 'b1', type: 'table', data: 'A | B | C\nD | E' }], {}, 1)));
+    const counts = app.bodyHtml().split('<tr>').slice(1).map(r => (r.match(/<td /g) || []).length).filter(n => n > 1);
+    assert(counts.length === 2 && counts[0] === counts[1], 'Short table rows must be padded to a full grid.');
+    log('PASS - Block background and table grid');
+
+    // --- Inherited body text colour ------------------------------------------
+    app.restore(JSON.stringify(makeState([{ id: 'b1', type: 'text', color: '' }], { text: '#abcdef' }, 1)));
+    assert(app.bodyHtml().includes('#abcdef'), 'A cleared block colour must inherit the email text colour.');
+    app.restore(JSON.stringify(makeState([{ id: 'b1', type: 'text', color: '#123456' }], { text: '#abcdef' }, 1)));
+    assert(app.bodyHtml().includes('#123456'), 'An explicit block colour must win over the email default.');
+    log('PASS - Inherited body text colour');
+
+    // --- Unsubscribe detection -----------------------------------------------
+    app.restore(JSON.stringify(makeState([
+      { id: 'b1', type: 'footer', html: 'Addr', unsub: 'Opt out', unsubHref: 'https://example.com/prefs' }
+    ], {}, 1)));
+    assert(!app.runChecks().some(c => c.title === 'No unsubscribe link'), 'A real opt-out link must satisfy the check.');
+    app.restore(JSON.stringify(makeState([{ id: 'b1', type: 'text' }], { preheader: 'unsubscribe now' }, 1)));
+    assert(app.runChecks().some(c => c.title === 'No unsubscribe link'), 'Preheader prose must not satisfy the check.');
+    app.restore(JSON.stringify(makeState([
+      { id: 'b1', type: 'text', html: '<a href="https://example.com/manage">Manage your email preferences</a>' }
+    ], {}, 1)));
+    assert(!app.runChecks().some(c => c.title === 'No unsubscribe link'), 'A body opt-out anchor must satisfy the check.');
+    log('PASS - Unsubscribe detection');
+
+    // --- Saved templates must not alias the live document --------------------
+    app.restore(JSON.stringify(makeState([{ id: 'b1', type: 'heading', text: 'SAVED' }], {}, 1)));
+    const savedTpl = app.cloneData(app.statePayload());
+    app.__test.doc.blocks[0].text = 'EDITED';
+    assert(savedTpl.blocks[0].text === 'SAVED', 'Editing a block must not mutate an already saved template.');
+    app.restore(savedTpl);
+    app.__test.doc.blocks[0].text = 'EDITED AGAIN';
+    assert(savedTpl.blocks[0].text === 'SAVED', 'Loading a template must not alias its stored blocks.');
+    log('PASS - Template isolation');
+
+    // --- Plain-text export must not leak stylesheet source -------------------
+    app.restore(JSON.stringify(makeState([
+      { id: 'b1', type: 'html', raw: '<style>.a{color:red}</style><p>Visible</p>' }
+    ], { preheader: '' }, 1)));
+    const styleText = app.textBody();
+    assert(styleText.includes('Visible') && !styleText.includes('color:red'),
+      'Plain-text export must drop stylesheet source.');
+    log('PASS - Plain-text export excludes CSS');
+
+    // --- Merge tags survive export unchanged ---------------------------------
+    Object.keys(app.__test.ESP).forEach(key => {
+      app.__test.ESP[key].tags.forEach(tag => {
+        app.restore(JSON.stringify(makeState([
+          { id: 'b1', type: 'footer', unsub: 'Unsubscribe', unsubHref: tag }
+        ], { esp: key }, 1)));
+        assert(app.bodyHtml().includes(app.__test.esc(tag)), `Merge tag ${tag} must survive export.`);
+      });
+    });
+    log('PASS - Merge tags survive export');
+
+    // --- Every block type still serializes ------------------------------------
+    Object.keys(app.__test.DEFAULTS).forEach(type => {
+      app.restore(JSON.stringify(makeState([{ id: 'b1', type }], {}, 1)));
+      const markup = app.bodyHtml();
+      assert(markup.includes('<tr>') && markup.length > 200, `Block type ${type} produced no output.`);
+    });
+    log('PASS - All block types serialize');
+
     log('SUCCESS - All smoke tests passed.');
   } catch (err) {
     log('FAIL - ' + err.message);

@@ -2,7 +2,7 @@
 
 EmailBuilder is a single-page visual editor for building email bodies and exporting table-based HTML that works across major email clients.
 
-Current version: v1.5
+Current version: v1.6
 
 ## Live URL
 
@@ -26,6 +26,18 @@ Current version: v1.5
 - Uses in-app dialogs for confirmations and naming flows instead of browser prompt/confirm popups.
 - Adds a critical issue confirmation gate before export/download.
 - Includes checks to help catch common email-client compatibility issues.
+
+## Output Guarantees
+
+- Rich text is rebuilt into an allowlisted tree, so no pasted attribute, event
+  handler or stray table markup reaches the export.
+- Link URLs are restricted to `http`, `https`, `mailto`, `tel` and `sms`.
+  Schemeless values — relative paths and ESP merge tags — pass through untouched.
+- Every table carries `border-collapse` and `mso-table-lspace/rspace` inline, so
+  body-only export renders correctly in Outlook without a stylesheet.
+- Full-document export sets `lang`, both text-size-adjust prefixes, and dark-mode
+  overrides for `prefers-color-scheme` and Outlook.com's `data-ogsc`/`data-ogsb`.
+- Data tables are padded to a full grid so short rows cannot break row borders.
 
 ## Starter Templates
 
@@ -63,7 +75,17 @@ Run lightweight browser tests from:
 
 - [tests/smoke-tests.html](tests/smoke-tests.html)
 
-The smoke suite validates HTML serialization, plain-text export, critical checks, and legacy draft migration.
+Serve the repository over HTTP rather than opening the file directly — Chrome and
+Edge treat two `file://` documents as different origins, so the suite cannot reach
+into the app frame and every test fails to start:
+
+```
+npx serve .        # then open http://localhost:3000/tests/smoke-tests.html
+```
+
+The smoke suite validates HTML serialization, plain-text export, critical checks,
+legacy draft migration, sanitizer hardening, inline Outlook table resets,
+dark-mode output, unsubscribe detection and saved-template isolation.
 
 ## Deployment
 

@@ -142,7 +142,7 @@
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><b>email/body</b><span class="ver" id="appVersion">v1.5</span><span>block → table serializer</span></div>
+    <div class="brand"><b>email/body</b><span class="ver" id="appVersion">v1.6</span><span>block → table serializer</span></div>
     <select class="btn" id="tplSel" title="Load a starter"><option value="">Start from…</option></select>
     <button class="btn" id="saveTplBtn" title="Save current design as a reusable template">Save template</button>
     <button class="btn" id="manageTplBtn" title="Manage saved custom templates">Manage templates</button>
@@ -240,7 +240,7 @@
    ============================================================ */
 let uid = 0;
 const nid = () => 'b' + (++uid);
-const APP_VERSION = 'v1.5';
+const APP_VERSION = 'v1.6';
 const DRAFT_KEY = 'email_builder_draft_v1';
 const STATE_SCHEMA_VERSION = 2;
 const CUSTOM_TEMPLATES_KEY = 'email_builder_custom_templates_v1';
@@ -257,7 +257,7 @@ const DEFAULT_SETTINGS = {
   text: '#1f2933', link: '#0b6bcb',
   safeReset: true,
   compatProfile: 'mainstream',
-  dir: 'ltr', esp: 'handlebars',
+  dir: 'ltr', lang: 'en', esp: 'handlebars',
   preheader: 'Rule versioning, a faster evaluator, and the new visual builder.'
 };
 
@@ -355,7 +355,7 @@ const HINTS = {
   button:  ['Outlook 2016–2019','border-radius is ignored by the Word engine, so the button renders square there. Padding sits on the &lt;td&gt;, not the &lt;a&gt;, or the hit area collapses.'],
   image:   ['Blocked by default','Most clients hide images until the reader allows them, so alt text has to read as real copy. Host on https, never SVG, and export at 2× the display width.'],
   columns: ['Fluid hybrid','Stacks on narrow screens with no media query — max-width plus inline-block does it, and an mso ghost table holds the row together in Outlook.'],
-  feature: ['Stacking order','On mobile the image lands above the text regardless of which side you pick, because inline-block wraps in source order.'],
+  feature: ['Stacking order','On mobile the columns stack in source order, so image-left stacks image first and image-right stacks the text first.'],
   list:    ['Table, not &lt;ul&gt;','Clients disagree wildly on default list padding. A two-cell table row per item renders identically everywhere.'],
   quote:   ['Border on the cell','The accent bar is a border-left on the &lt;td&gt;. Borders on tables get dropped by the Word engine at some zoom levels.'],
   table:   ['One row per line','Edit as pipe-separated text. Keep it to two or three columns — anything wider overflows on a 320px screen.'],
@@ -377,64 +377,135 @@ const padStyle = (b,s) => { const g = gut(b,s); return `${px(b.pt)}px ${g.r}px $
 const bgAttr  = b => b.bg ? ` bgcolor="${b.bg}"` : '';
 const bgStyle = b => b.bg ? `background-color:${b.bg};` : '';
 const fontOf  = (b,s) => b.font || s.font;
+const colorOf = (b,s) => b.color || s.text;
 const marginFor = a => a === 'center' ? 'margin:0 auto;' : a === 'right' ? 'margin:0 0 0 auto;' : 'margin:0;';
 const de = (o,k) => o.edit ? ` data-edit="${k}"` : '';
 
-function sanitize(html, s){
-  const root = document.createElement('div');
-  root.innerHTML = html;
-  const ok = { A:1, STRONG:1, EM:1, U:1, BR:1, SPAN:1, P:1 };
-  const map = { B:'STRONG', I:'EM', DIV:'P' };
-  (function walk(node){
-    [...node.childNodes].forEach(n => {
-      if (n.nodeType === 3) return;
-      if (n.nodeType !== 1) { n.remove(); return; }
-      let el = n;
-      if (map[el.tagName]) {
-        const rep = document.createElement(map[el.tagName].toLowerCase());
-        rep.innerHTML = el.innerHTML; el.replaceWith(rep); el = rep;
-      }
-      if (!ok[el.tagName]) { el.replaceWith(...el.childNodes); return; }
-      const href = el.getAttribute('href');
-      [...el.attributes].forEach(a => el.removeAttribute(a.name));
-      if (el.tagName === 'A') {
-        el.setAttribute('href', href || '#');
+/* A URL is safe when it carries no scheme at all (relative paths and ESP merge
+   tags) or a scheme mail clients actually follow. Everything else is refused. */
+const SAFE_URL_SCHEMES = new Set(['http','https','mailto','tel','sms']);
+const URL_SCHEME_RE = /^([a-z][a-z0-9+.\-]*):/i;
+
+function safeUrl(value, fallback = '#') {
+  const raw = String(value ?? '').trim();
+  if (!raw) return fallback;
+  const probe = raw.replace(/[\u0000-\u0020\u007f]/g, '');
+  const scheme = URL_SCHEME_RE.exec(probe);
+  if (scheme && !SAFE_URL_SCHEMES.has(scheme[1].toLowerCase())) return fallback;
+  return raw;
+}
+
+const SANITIZE_KEEP  = { A:1, STRONG:1, EM:1, U:1, BR:1, SPAN:1, P:1 };
+const SANITIZE_MAP   = { B:'STRONG', I:'EM', DIV:'P', BLOCKQUOTE:'P' };
+const SANITIZE_DROP  = { SCRIPT:1, STYLE:1, NOSCRIPT:1, TEMPLATE:1, IFRAME:1, OBJECT:1, EMBED:1,
+                         FORM:1, INPUT:1, SELECT:1, TEXTAREA:1, BUTTON:1, HEAD:1, TITLE:1, META:1,
+                         LINK:1, BASE:1, SVG:1, MATH:1, IMG:1, VIDEO:1, AUDIO:1, CANVAS:1 };
+const SANITIZE_BREAK = /^(?:TR|LI|H[1-6]|HR|PRE|ADDRESS|DT|DD|FIGCAPTION|CAPTION)$/;
+const SANITIZE_SPACE = /^(?:TD|TH)$/;
+
+const isBreak = n => n && n.nodeType === 1 && n.tagName === 'BR';
+
+/* Keeps a pasted layout readable once its structure is gone: one break per row
+   or list item, never two in a row, and none left dangling at the end. */
+function breakIfNeeded(to) {
+  if (to.lastChild && !isBreak(to.lastChild)) to.append(document.createElement('br'));
+}
+function trimTrailingBreaks(el) {
+  while (isBreak(el.lastChild)) el.lastChild.remove();
+}
+
+/* Copies allowed nodes into a fresh tree instead of editing the parsed one in
+   place. Nothing can survive by being hoisted past the walk, and no attribute
+   carries over unless it is written here. */
+function sanitizeInto(from, to, s, ctx) {
+  if (ctx.depth > 24) { to.append(from.textContent || ''); return; }
+  [...from.childNodes].forEach(n => {
+    if (n.nodeType === 3) { to.append(n.nodeValue); return; }
+    if (n.nodeType !== 1) return;
+
+    const tag = n.tagName;
+    if (SANITIZE_DROP[tag]) return;
+
+    const wanted = SANITIZE_MAP[tag] || tag;
+    let mapped = wanted;
+    if (mapped === 'P' && ctx.inP) mapped = '';
+    if (mapped === 'A' && ctx.inA) mapped = '';
+
+    if (mapped && SANITIZE_KEEP[mapped]) {
+      const el = document.createElement(mapped.toLowerCase());
+      if (mapped === 'A') {
+        el.setAttribute('href', safeUrl(n.getAttribute('href')));
         el.setAttribute('target','_blank');
         el.setAttribute('style', `color:${s.link};text-decoration:underline;`);
       }
-      if (el.tagName === 'P') el.setAttribute('style','margin:0 0 14px;');
-      walk(el);
-    });
-  })(root);
-  return root.innerHTML.trim();
+      if (mapped === 'P') el.setAttribute('style','margin:0 0 14px;');
+      sanitizeInto(n, el, s, { depth: ctx.depth + 1, inP: ctx.inP || mapped === 'P', inA: ctx.inA || mapped === 'A' });
+      if (mapped !== 'BR') trimTrailingBreaks(el);
+      to.append(el);
+      return;
+    }
+
+    const block = SANITIZE_BREAK.test(tag) || wanted === 'P';
+    if (block) breakIfNeeded(to);
+    else if (SANITIZE_SPACE.test(tag) && to.lastChild && !isBreak(to.lastChild)) to.append(' ');
+    sanitizeInto(n, to, s, { depth: ctx.depth + 1, inP: ctx.inP, inA: ctx.inA });
+    if (block) breakIfNeeded(to);
+  });
+}
+
+function sanitize(html, s){
+  const src = document.createElement('template');
+  src.innerHTML = String(html ?? '');
+  const out = document.createElement('div');
+  sanitizeInto(src.content, out, s, { depth: 0, inP: false, inA: false });
+  trimTrailingBreaks(out);
+  return out.innerHTML.trim();
+}
+
+const RAW_DROP_TAGS = 'script,iframe,object,embed,form,meta,link,style,base,title,svg,math,noscript,frame,frameset,applet';
+const RAW_URL_ATTRS = ['href','src','xlink:href','action','formaction','background','poster','data','codebase','cite'];
+
+/* Raw blocks stay the escape hatch for ESP markup, so structure is preserved.
+   A <template> parses inertly, which keeps referenced media from loading. */
+function parseRawHtml(raw) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = String(raw || '');
+  return tpl;
 }
 
 function sanitizeRawHtml(raw) {
-  const root = document.createElement('div');
-  root.innerHTML = String(raw || '');
-  root.querySelectorAll('script,iframe,object,embed,form,meta,link').forEach(n => n.remove());
-  root.querySelectorAll('*').forEach(el => {
+  const tpl = parseRawHtml(raw);
+  tpl.content.querySelectorAll(RAW_DROP_TAGS).forEach(n => n.remove());
+  tpl.content.querySelectorAll('*').forEach(el => {
     [...el.attributes].forEach(a => {
       const key = a.name.toLowerCase();
-      const val = String(a.value || '');
-      if (key.startsWith('on')) { el.removeAttribute(a.name); return; }
-      if (key === 'srcdoc') { el.removeAttribute(a.name); return; }
-      if ((key === 'href' || key === 'src' || key === 'xlink:href') && /^\s*javascript:/i.test(val)) {
-        el.removeAttribute(a.name);
-      }
+      if (key.startsWith('on') || key === 'srcdoc') { el.removeAttribute(a.name); return; }
+      if (RAW_URL_ATTRS.includes(key) && safeUrl(a.value, '') === '') el.removeAttribute(a.name);
     });
   });
-  return root.innerHTML;
+  return tpl.innerHTML;
+}
+
+/* Compares like with like: both sides are parser-normalised, so tidy-ups such
+   as a closed <p> do not read as "something unsafe was stripped". */
+function rawHtmlWasStripped(raw) {
+  return sanitizeRawHtml(raw) !== parseRawHtml(raw).innerHTML;
 }
 
 const PT = 'role="presentation" border="0" cellpadding="0" cellspacing="0"';
 
+/* Outlook's Word engine adds space around every table and ignores a <style>
+   block, so these two have to ride inline on each one. Body-only export ships
+   no stylesheet at all, which makes that the only place they can live. */
+const TBL = 'border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;';
+const tbl = (attrs = '', style = '') => `<table ${PT}${attrs ? ' ' + attrs : ''} style="${TBL}${style}">`;
+
 function block(b, s, o = {}) {
-  const g = pt => gut(b,s);
   const G = gut(b,s);
   const inner = s.width - G.l - G.r;
   const P = padStyle(b,s);
   const F = fontOf(b,s);
+  const C = colorOf(b,s);
 
   switch (b.type) {
 
@@ -442,7 +513,7 @@ function block(b, s, o = {}) {
     const w = px(b.width);
     const img = `<img src="${esc(b.src)}" alt="${esc(b.alt)}" width="${w}" style="display:block;${marginFor(b.align)}width:100%;max-width:${w}px;height:auto;border:0;outline:none;text-decoration:none;">`;
     return `<tr>
-<td align="${b.align}"${bgAttr(b)} style="padding:${P};${bgStyle(b)}font-size:0;">${b.href ? `<a href="${esc(b.href)}" target="_blank" style="text-decoration:none;">${img}</a>` : img}</td>
+<td align="${b.align}"${bgAttr(b)} style="padding:${P};${bgStyle(b)}font-size:0;">${b.href ? `<a href="${esc(safeUrl(b.href))}" target="_blank" style="text-decoration:none;">${img}</a>` : img}</td>
 </tr>`;
   }
 
@@ -450,14 +521,14 @@ function block(b, s, o = {}) {
     const tag = 'h' + b.level;
     return `<tr>
 <td align="${b.align}"${bgAttr(b)} style="padding:${P};${bgStyle(b)}">
-<${tag}${de(o,'text')} style="margin:0;font-family:${F};font-size:${px(b.size)}px;line-height:${Math.round(b.size*1.25)}px;font-weight:${b.weight};letter-spacing:${b.ls||0}px;color:${b.color};mso-line-height-rule:exactly;">${esc(b.text)}</${tag}>
+<${tag}${de(o,'text')} style="margin:0;font-family:${F};font-size:${px(b.size)}px;line-height:${Math.round(px(b.size)*1.25)}px;font-weight:${b.weight};letter-spacing:${b.ls||0}px;color:${C};mso-line-height-rule:exactly;">${esc(b.text)}</${tag}>
 </td>
 </tr>`;
   }
 
   case 'text':
     return `<tr>
-<td${de(o,'html')} align="${b.align}"${bgAttr(b)} style="padding:${P};${bgStyle(b)}font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${b.color};mso-line-height-rule:exactly;">${sanitize(b.html,s)}</td>
+<td${de(o,'html')} align="${b.align}"${bgAttr(b)} style="padding:${P};${bgStyle(b)}font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${C};mso-line-height-rule:exactly;">${sanitize(b.html,s)}</td>
 </tr>`;
 
   case 'button': {
@@ -468,16 +539,17 @@ function block(b, s, o = {}) {
     const labelW = Math.max(120, Math.round(String(b.label || '').length * (px(b.size) * 0.62)));
     const vmlW = b.full ? Math.max(120, inner) : labelW + px(b.px) * 2;
     const stroke = borderW ? `strokecolor="${b.borderC}" strokeweight="${borderW}px"` : 'stroked="f"';
+    const href = esc(safeUrl(b.href));
     const mso = `<!--[if mso]>
-  <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="${esc(b.href)}" style="height:${h}px;v-text-anchor:middle;width:${vmlW}px;" arcsize="${arc}%" fillcolor="${b.bgc}" ${stroke}>
+  <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="${href}" style="height:${h}px;v-text-anchor:middle;width:${vmlW}px;" arcsize="${arc}%" fillcolor="${b.bgc}" ${stroke}>
   <center style="color:${b.color};font-family:${F};font-size:${px(b.size)}px;font-weight:bold;">${esc(b.label)}</center>
   </v:roundrect>
   <![endif]-->`;
     const btn = `<!--[if !mso]><!-->
-  <table ${PT} ${b.full ? 'width="100%" ' : ''}style="border-collapse:separate;${b.full ? 'width:100%;' : ''}">
+  ${tbl(b.full ? 'width="100%"' : '', `border-collapse:separate;${b.full ? 'width:100%;' : ''}`)}
 <tr>
 <td align="center" bgcolor="${b.bgc}" style="border-radius:${px(b.radius)}px;${bd}padding:${px(b.py)}px ${px(b.px)}px;">
-<a href="${esc(b.href)}" target="_blank" style="display:block;font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.size)+4}px;font-weight:bold;color:${b.color};text-decoration:none;white-space:nowrap;">${esc(b.label)}</a>
+<a href="${href}" target="_blank" style="display:block;font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.size)+4}px;font-weight:bold;color:${b.color};text-decoration:none;white-space:nowrap;">${esc(b.label)}</a>
 </td>
 </tr>
   </table>
@@ -491,7 +563,7 @@ function block(b, s, o = {}) {
     const w = b.full ? s.width - (b.pl == null ? 0 : G.l) - (b.pr == null ? 0 : G.r) : px(b.width);
     const pad = b.full ? `${px(b.pt)}px ${b.pr == null ? 0 : G.r}px ${px(b.pb)}px ${b.pl == null ? 0 : G.l}px` : P;
     const img = `<img src="${esc(b.src)}" alt="${esc(b.alt)}" width="${w}" style="display:block;${marginFor(b.align)}width:100%;max-width:${w}px;height:auto;${px(b.radius) ? `border-radius:${px(b.radius)}px;` : ''}border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;">`;
-    const wrapped = b.href ? `<a href="${esc(b.href)}" target="_blank" style="text-decoration:none;">${img}</a>` : img;
+    const wrapped = b.href ? `<a href="${esc(safeUrl(b.href))}" target="_blank" style="text-decoration:none;">${img}</a>` : img;
     const cap = b.caption ? `
 <div style="font-family:${F};font-size:12px;line-height:18px;color:#7b8794;padding:8px ${G.r}px 0 ${G.l}px;text-align:${b.align};">${esc(b.caption)}</div>` : '';
     return `<tr>
@@ -505,7 +577,7 @@ function block(b, s, o = {}) {
     const gp = px(b.gap);
     let out = `<tr>
 <td${bgAttr(b)} style="padding:${P};${bgStyle(b)}font-size:0;">
-<!--[if mso]><table ${PT} width="100%"><tr><![endif]-->
+<!--[if mso]>${tbl('width="100%"')}<tr><![endif]-->
 `;
     b.cols.forEach((c,i) => {
       const pl = i === 0 ? 0 : Math.round(gp/2);
@@ -513,8 +585,8 @@ function block(b, s, o = {}) {
       const img = c.img ? `<img src="${esc(c.img)}" alt="" width="${cw-pl-pr}" style="display:block;width:100%;max-width:${cw-pl-pr}px;height:auto;border:0;margin:0 0 10px;">` : '';
       out += `<!--[if mso]><td width="${cw}" valign="top"><![endif]-->
 <div style="display:inline-block;width:100%;max-width:${cw}px;vertical-align:top;">
-<table ${PT} width="100%">
-<tr><td align="${b.align}" style="padding:0 ${pr}px 0 ${pl}px;font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${b.color};mso-line-height-rule:exactly;">${img}<span${de(o,'col:'+i)}>${sanitize(c.html,s)}</span></td></tr>
+${tbl('width="100%"')}
+<tr><td align="${b.align}" style="padding:0 ${pr}px 0 ${pl}px;font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${C};mso-line-height-rule:exactly;">${img}<span${de(o,'col:'+i)}>${sanitize(c.html,s)}</span></td></tr>
 </table>
 </div>
 <!--[if mso]></td><![endif]-->
@@ -525,29 +597,30 @@ function block(b, s, o = {}) {
 </tr>`;
   }
 
+
   case 'feature': {
     const gp = px(b.gap);
     const iw = Math.round(inner * Math.min(80, Math.max(20, px(b.ratio))) / 100);
     const tw = inner - iw;
     const imgCol = `<!--[if mso]><td width="${iw}" valign="${b.valign}"><![endif]-->
 <div style="display:inline-block;width:100%;max-width:${iw}px;vertical-align:${b.valign};">
-<table ${PT} width="100%"><tr><td style="padding:0 ${b.imgSide === 'left' ? gp : 0}px 0 ${b.imgSide === 'left' ? 0 : gp}px;font-size:0;">
+${tbl('width="100%"')}<tr><td style="padding:0 ${b.imgSide === 'left' ? gp : 0}px 0 ${b.imgSide === 'left' ? 0 : gp}px;font-size:0;">
 <img src="${esc(b.img)}" alt="" width="${iw-gp}" style="display:block;width:100%;max-width:${iw-gp}px;height:auto;border:0;">
 </td></tr></table>
 </div>
 <!--[if mso]></td><![endif]-->`;
     const txtCol = `<!--[if mso]><td width="${tw}" valign="${b.valign}"><![endif]-->
 <div style="display:inline-block;width:100%;max-width:${tw}px;vertical-align:${b.valign};">
-<table ${PT} width="100%"><tr><td style="font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${b.color};mso-line-height-rule:exactly;">
-${b.title ? `<div style="font-size:${px(b.titleSize)}px;line-height:${Math.round(b.titleSize*1.3)}px;font-weight:bold;color:${b.titleColor};padding:0 0 6px;">${esc(b.title)}</div>` : ''}
+${tbl('width="100%"')}<tr><td style="font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${C};mso-line-height-rule:exactly;">
+${b.title ? `<div style="font-size:${px(b.titleSize)}px;line-height:${Math.round(px(b.titleSize)*1.3)}px;font-weight:bold;color:${b.titleColor};padding:0 0 6px;">${esc(b.title)}</div>` : ''}
 <span${de(o,'html')}>${sanitize(b.html,s)}</span>
-${b.linkLabel ? `<div style="padding:10px 0 0;"><a href="${esc(b.linkHref)}" target="_blank" style="color:${s.link};text-decoration:underline;font-weight:bold;">${esc(b.linkLabel)}</a></div>` : ''}
+${b.linkLabel ? `<div style="padding:10px 0 0;"><a href="${esc(safeUrl(b.linkHref))}" target="_blank" style="color:${s.link};text-decoration:underline;font-weight:bold;">${esc(b.linkLabel)}</a></div>` : ''}
 </td></tr></table>
 </div>
 <!--[if mso]></td><![endif]-->`;
     return `<tr>
 <td${bgAttr(b)} style="padding:${P};${bgStyle(b)}font-size:0;">
-<!--[if mso]><table ${PT} width="100%"><tr><![endif]-->
+<!--[if mso]>${tbl('width="100%"')}<tr><![endif]-->
 ${b.imgSide === 'left' ? imgCol + '\n' + txtCol : txtCol + '\n' + imgCol}
 <!--[if mso]></tr></table><![endif]-->
 </td>
@@ -557,11 +630,11 @@ ${b.imgSide === 'left' ? imgCol + '\n' + txtCol : txtCol + '\n' + imgCol}
   case 'list': {
     const rows = b.items.map((it,i) => `<tr>
 <td width="${px(b.indent)}" valign="top" style="width:${px(b.indent)}px;font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${b.marker};padding-bottom:${px(b.spacing)}px;mso-line-height-rule:exactly;">${b.ordered ? (i+1)+'.' : '&bull;'}</td>
-<td valign="top" style="font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${b.color};padding-bottom:${px(b.spacing)}px;mso-line-height-rule:exactly;"><span${de(o,'item:'+i)}>${sanitize(it,s)}</span></td>
+<td valign="top" style="font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${C};padding-bottom:${px(b.spacing)}px;mso-line-height-rule:exactly;"><span${de(o,'item:'+i)}>${sanitize(it,s)}</span></td>
 </tr>`).join('\n');
     return `<tr>
 <td${bgAttr(b)} style="padding:${P};${bgStyle(b)}">
-<table ${PT} width="100%">
+${tbl('width="100%"')}
 ${rows}
 </table>
 </td>
@@ -570,9 +643,9 @@ ${rows}
 
   case 'quote':
     return `<tr>
-<td style="padding:${P};">
-<table ${PT} width="100%" style="background-color:${b.boxBg};">
-<tr><td style="padding:${px(b.inner)}px ${px(b.inner)+2}px;border-left:${px(b.accentW)}px solid ${b.accent};font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${b.color};mso-line-height-rule:exactly;">
+<td${bgAttr(b)} style="padding:${P};${bgStyle(b)}">
+${tbl('width="100%"', `background-color:${b.boxBg};`)}
+<tr><td style="padding:${px(b.inner)}px ${px(b.inner)+2}px;border-left:${px(b.accentW)}px solid ${b.accent};font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${C};mso-line-height-rule:exactly;">
 <span${de(o,'html')}>${sanitize(b.html,s)}</span>${b.cite ? `<br><br><span style="font-size:${Math.max(11,px(b.size)-2)}px;color:${b.citeColor};">${esc(b.cite)}</span>` : ''}
 </td></tr>
 </table>
@@ -582,15 +655,19 @@ ${rows}
   case 'table': {
     const lines = String(b.data).split('\n').map(l => l.split('|').map(c => c.trim())).filter(l => l.join(''));
     if (!lines.length) return '';
-    const cellStyle = (i,last) => `padding:${px(b.cpy)}px ${px(b.cpx)}px;font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${b.color};${last ? '' : `border-bottom:1px solid ${b.border};`}mso-line-height-rule:exactly;`;
+    /* Pad short rows out so every row has the same cell count — a ragged table
+       drops borders and shifts columns in the Word engine. */
+    const cols = lines.reduce((max,l) => Math.max(max, l.length), 0);
+    const grid = lines.map(l => l.length === cols ? l : l.concat(Array(cols - l.length).fill('')));
+    const cellStyle = (i,last) => `padding:${px(b.cpy)}px ${px(b.cpx)}px;font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${C};${last ? '' : `border-bottom:1px solid ${b.border};`}mso-line-height-rule:exactly;`;
     let out = '';
-    lines.forEach((row,r) => {
+    grid.forEach((row,r) => {
       const isHead = b.header && r === 0;
-      out += `<tr>${row.map((c,i) => `<td align="${i ? b.alignR : 'left'}"${isHead ? ` bgcolor="${b.headBg}"` : ''} style="${cellStyle(i, r === lines.length-1)}${isHead ? `font-weight:bold;color:${b.headColor};` : ''}">${esc(c)}</td>`).join('')}</tr>\n`;
+      out += `<tr>${row.map((c,i) => `<td align="${i ? b.alignR : 'left'}"${isHead ? ` bgcolor="${b.headBg}"` : ''} style="${cellStyle(i, r === grid.length-1)}${isHead ? `font-weight:bold;color:${b.headColor};` : ''}">${esc(c)}</td>`).join('')}</tr>\n`;
     });
     return `<tr>
 <td${bgAttr(b)} style="padding:${P};${bgStyle(b)}">
-<table ${PT} width="100%" style="border-collapse:collapse;">
+${tbl('width="100%"')}
 ${out}</table>
 </td>
 </tr>`;
@@ -599,9 +676,9 @@ ${out}</table>
   case 'links': {
     const gp = Math.round(px(b.gap)/2);
     const items = b.items.map(it => b.style === 'icon' && it.icon
-      ? `<a href="${esc(it.href)}" target="_blank" style="display:inline-block;padding:0 ${gp}px;text-decoration:none;"><img src="${esc(it.icon)}" alt="${esc(it.label)}" width="${px(b.iconSize)}" height="${px(b.iconSize)}" style="display:block;border:0;"></a>`
-      : `<a href="${esc(it.href)}" target="_blank" style="display:inline-block;padding:0 ${gp}px;font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.size)+10}px;color:${b.color};text-decoration:${b.underline ? 'underline' : 'none'};">${esc(it.label)}</a>`);
-    const sep = b.style === 'icon' ? '' : `<span style="font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.size)+10}px;color:${b.color};">${esc(b.sep)}</span>`;
+      ? `<a href="${esc(safeUrl(it.href))}" target="_blank" style="display:inline-block;padding:0 ${gp}px;text-decoration:none;"><img src="${esc(it.icon)}" alt="${esc(it.label)}" width="${px(b.iconSize)}" height="${px(b.iconSize)}" style="display:block;border:0;"></a>`
+      : `<a href="${esc(safeUrl(it.href))}" target="_blank" style="display:inline-block;padding:0 ${gp}px;font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.size)+10}px;color:${C};text-decoration:${b.underline ? 'underline' : 'none'};">${esc(it.label)}</a>`);
+    const sep = b.style === 'icon' ? '' : `<span style="font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.size)+10}px;color:${C};">${esc(b.sep)}</span>`;
     return `<tr>
 <td align="${b.align}"${bgAttr(b)} style="padding:${P};${bgStyle(b)}font-size:0;">${items.join(sep)}</td>
 </tr>`;
@@ -611,7 +688,7 @@ ${out}</table>
     const t = px(b.thickness) || 1;
     return `<tr>
 <td${bgAttr(b)} style="padding:${P};${bgStyle(b)}">
-<table ${PT} width="100%">
+${tbl('width="100%"')}
 <tr><td height="${t}" bgcolor="${b.color}" style="height:${t}px;line-height:${t}px;font-size:0;mso-line-height-rule:exactly;">&nbsp;</td></tr>
 </table>
 </td>
@@ -627,14 +704,14 @@ ${out}</table>
 
   case 'footer':
     return `<tr>
-<td align="${b.align}"${bgAttr(b)} style="padding:${P};${bgStyle(b)}font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${b.color};mso-line-height-rule:exactly;">
-<span${de(o,'html')}>${sanitize(b.html,s)}</span>${b.unsub ? `<br><a href="${esc(b.unsubHref)}" target="_blank" style="color:${b.color};text-decoration:underline;">${esc(b.unsub)}</a>` : ''}
+<td align="${b.align}"${bgAttr(b)} style="padding:${P};${bgStyle(b)}font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${C};mso-line-height-rule:exactly;">
+<span${de(o,'html')}>${sanitize(b.html,s)}</span>${b.unsub ? `<br><a href="${esc(safeUrl(b.unsubHref))}" target="_blank" style="color:${C};text-decoration:underline;">${esc(b.unsub)}</a>` : ''}
 </td>
 </tr>`;
 
   case 'html':
     return `<tr>
-<td${bgAttr(b)} style="padding:${P};${bgStyle(b)}font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${b.color};">${sanitizeRawHtml(b.raw)}</td>
+<td${bgAttr(b)} style="padding:${P};${bgStyle(b)}font-family:${F};font-size:${px(b.size)}px;line-height:${px(b.lh)}px;color:${C};">${sanitizeRawHtml(b.raw)}</td>
 </tr>`;
   }
   return '';
@@ -646,11 +723,11 @@ function bodyHtml(o = {}) {
   const pre = s.preheader
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${s.cardBg};">${esc(s.preheader)}&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;</div>\n` : '';
   const dir = s.dir === 'rtl' ? ' dir="rtl"' : '';
-  return `${pre}<table ${PT} width="100%"${dir} bgcolor="${s.pageBg}" style="background-color:${s.pageBg};margin:0;padding:0;width:100%;">
+  return `${pre}${tbl(`class="eb-page" width="100%"${dir} bgcolor="${s.pageBg}"`, `background-color:${s.pageBg};margin:0;padding:0;width:100%;`)}
 <tr>
 <td align="center" style="padding:24px 10px;">
-<!--[if mso]><table ${PT} width="${s.width}"><tr><td><![endif]-->
-<table ${PT} width="100%" bgcolor="${s.cardBg}" style="width:100%;max-width:${s.width}px;background-color:${s.cardBg};${px(s.radius) ? `border-radius:${px(s.radius)}px;overflow:hidden;` : ''}">
+<!--[if mso]>${tbl(`width="${s.width}"`)}<tr><td><![endif]-->
+${tbl(`class="eb-card" width="100%" bgcolor="${s.cardBg}"`, `width:100%;max-width:${s.width}px;background-color:${s.cardBg};color:${s.text};${px(s.radius) ? `border-radius:${px(s.radius)}px;overflow:hidden;` : ''}`)}
 ${rows}
 </table>
 <!--[if mso]></td></tr></table><![endif]-->
@@ -661,10 +738,10 @@ ${rows}
 
 function fullHtml() {
   const s = doc.settings;
-  const reset = s.safeReset ? `<style type="text/css">
+  const reset = s.safeReset ? `
   #outlook a { padding:0; }
   img { border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; }
-  table { border-collapse:collapse; }
+  table { border-collapse:collapse; mso-table-lspace:0pt; mso-table-rspace:0pt; }
   a[x-apple-data-detectors],
   #MessageViewBody a,
   u + #body a {
@@ -674,10 +751,22 @@ function fullHtml() {
     font-family: inherit !important;
     font-weight: inherit !important;
     line-height: inherit !important;
+  }` : '';
+  /* Gmail and Outlook.com invert colours regardless of the color-scheme hints,
+     so the two wrappers are pinned back to the chosen palette. Keeping this to
+     the wrappers leaves per-block colours — buttons, quote boxes — untouched. */
+  const scheme = `
+  @media only screen and (max-width:620px) {
+    .eb-card { width:100% !important; max-width:100% !important; }
   }
-</style>` : '';
+  @media (prefers-color-scheme: dark) {
+    .eb-page { background-color:${s.pageBg} !important; }
+    .eb-card { background-color:${s.cardBg} !important; }
+  }
+  [data-ogsc] .eb-page, [data-ogsb] .eb-page { background-color:${s.pageBg} !important; }
+  [data-ogsc] .eb-card, [data-ogsb] .eb-card { background-color:${s.cardBg} !important; }`;
   return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" dir="${s.dir}">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" lang="${esc(s.lang)}" dir="${s.dir}">
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -685,13 +774,14 @@ function fullHtml() {
 <meta name="x-apple-disable-message-reformatting">
 <meta name="color-scheme" content="light">
 <meta name="supported-color-schemes" content="light">
-${reset}
+<style type="text/css">${reset}${scheme}
+</style>
 <title></title>
 <!--[if mso]>
 <noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
 <![endif]-->
 </head>
-<body id="body" bgcolor="${s.pageBg}" style="margin:0;padding:0;background-color:${s.pageBg};-webkit-text-size-adjust:100%;">
+<body id="body" bgcolor="${s.pageBg}" style="margin:0;padding:0;background-color:${s.pageBg};color:${s.text};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
 ${bodyHtml()}
 </body>
 </html>`;
@@ -700,6 +790,24 @@ ${bodyHtml()}
 /* ============================================================
    3. CHECKS
    ============================================================ */
+
+/* Matched against real anchors only. Prose mentioning the word — a preheader,
+   a paragraph — is not an opt-out, and an opt-out is not always called one. */
+const UNSUB_RE = /unsub|opt[\s._-]?out|preference|manage[\s._-]?(your[\s._-]?)?(email|subscription)|remove[\s._-]?me/i;
+
+function hasUnsubscribeLink(html) {
+  const footerLink = doc.blocks.some(b => b.type === 'footer'
+    && String(b.unsub || '').trim()
+    && String(b.unsubHref || '').trim());
+  if (footerLink) return true;
+  return [...String(html).matchAll(/<a\s[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi)]
+    .some(m => {
+      const href = m[1];
+      const label = m[2].replace(/<[^>]*>/g, ' ');
+      return href && href !== '#' && (UNSUB_RE.test(href) || UNSUB_RE.test(label));
+    });
+}
+
 function runChecks() {
   const s = doc.settings, out = [], html = bodyHtml();
   const profile = s.compatProfile || DEFAULT_SETTINGS.compatProfile;
@@ -717,7 +825,7 @@ function runChecks() {
   const bad = hrefs.filter(h => !h || h === '#' || h === 'https://');
   if (bad.length) push('warn','Placeholder links', `${bad.length} link${bad.length>1?'s':''} still point at a placeholder.`);
 
-  if (!/unsub/i.test(html)) push('err','No unsubscribe link','Bulk mail needs a working opt-out and a physical address, or you land in spam folders and breach CAN-SPAM, GDPR and the NZ Unsolicited Electronic Messages Act.');
+  if (!hasUnsubscribeLink(html)) push('err','No unsubscribe link','Bulk mail needs a working opt-out and a physical address, or you land in spam folders and breach CAN-SPAM, GDPR and the NZ Unsolicited Electronic Messages Act.');
   if (!s.preheader.trim()) push('warn','No preheader','Without it the client pulls your first line of body copy into the inbox preview.');
 
   const small = doc.blocks.filter(b => b.size && b.size < 14 && ['text','columns','list','feature','quote'].includes(b.type));
@@ -746,7 +854,7 @@ function runChecks() {
     if (s.width > 600) push('warn','Legacy profile width target','For legacy-heavy support, keep container width at 600px or less.');
   }
 
-  const unsafeRaw = doc.blocks.filter(b => b.type === 'html' && sanitizeRawHtml(b.raw || '') !== String(b.raw || ''));
+  const unsafeRaw = doc.blocks.filter(b => b.type === 'html' && rawHtmlWasStripped(b.raw || ''));
   if (unsafeRaw.length) push('err','Unsafe raw HTML', `${unsafeRaw.length} raw block${unsafeRaw.length>1?'s were':''} sanitized to remove risky tags or attributes.`);
 
   if (doc.blocks.some(b => b.type === 'html')) push('warn','Raw HTML block in use','Raw blocks remain advanced/unsafe territory and should be tested in target clients after sanitization.');
@@ -795,10 +903,18 @@ function normalizeSettings(input) {
   next.compatProfile = COMPAT_PROFILES.some(([k]) => k === next.compatProfile) ? next.compatProfile : DEFAULT_SETTINGS.compatProfile;
   next.dir = next.dir === 'rtl' ? 'rtl' : 'ltr';
   next.esp = ESP[next.esp] ? next.esp : DEFAULT_SETTINGS.esp;
-  ['pageBg','cardBg','font','text','link','preheader'].forEach(k => {
+  ['pageBg','cardBg','font','text','link','preheader','lang'].forEach(k => {
     if (typeof next[k] !== 'string') next[k] = DEFAULT_SETTINGS[k];
   });
+  next.lang = /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(next.lang.trim()) ? next.lang.trim() : DEFAULT_SETTINGS.lang;
   return next;
+}
+
+/* Blocks are handed round by reference — saved templates, history snapshots and
+   the live document must never end up sharing the same nested arrays. */
+function cloneData(value) {
+  try { return structuredClone(value); }
+  catch { try { return JSON.parse(JSON.stringify(value)); } catch { return value; } }
 }
 
 function normalizeBlocks(input) {
@@ -809,7 +925,7 @@ function normalizeBlocks(input) {
 
   source.forEach(raw => {
     if (!raw || typeof raw !== 'object' || !DEFAULTS[raw.type]) return;
-    const merged = { id: '', bg:'', pl:null, pr:null, ...DEFAULTS[raw.type](), ...raw };
+    const merged = { id: '', bg:'', pl:null, pr:null, ...DEFAULTS[raw.type](), ...cloneData(raw) };
     if (typeof merged.id !== 'string' || !merged.id.trim() || used.has(merged.id)) merged.id = nid();
     used.add(merged.id);
 
@@ -1109,7 +1225,7 @@ async function saveCurrentTemplate() {
     cancelText: 'Cancel',
     danger: true
   }))) return;
-  customTemplates[name] = statePayload();
+  customTemplates[name] = cloneData(statePayload());
   writeCustomTemplates();
   syncTemplateSelect();
   renderTemplateManager();
@@ -1147,7 +1263,7 @@ function renderCanvas() {
         <button data-a="dup" title="Duplicate">⧉</button>
         <button data-a="del" title="Delete">✕</button>
       </div>
-      <table ${PT} width="100%" style="width:100%;">${block(b, s, { edit:true })}</table>`;
+      ${tbl('width="100%"', 'width:100%;')}${block(b, s, { edit:true })}</table>`;
     host.appendChild(w);
     wireEditable(w, b);
   });
@@ -1372,7 +1488,8 @@ function renderEmail(s) {
     ${fColor('Card background','$cardBg',s.cardBg)}
     ${fColor('Body text','$text',s.text)}
     ${fColor('Link','$link',s.link)}
-    ${fSel('Text direction','$dir',s.dir,[['ltr','Left to right'],['rtl','Right to left']])}
+    <div class="note" style="background:rgba(79,209,255,.06);border-color:rgba(79,209,255,.25);color:#a9d9ea"><span><b style="color:var(--accent)">Body text</b>Blocks that set their own colour keep it. Clear a block's colour field to fall back to this one.</span></div>
+    <div class="row">${fSel('Text direction','$dir',s.dir,[['ltr','Left to right'],['rtl','Right to left']])}${fText('Language','$lang',s.lang,'en')}</div>
     ${fArea('Preheader','$preheader',s.preheader,3)}
     <div class="note"><span><b>Preheader</b>The preview line in the inbox list. It stays hidden in the body and is padded with zero-width joiners so the client cannot pull your first paragraph in after it.</span></div>
     <div class="sect"><span class="eyebrow">Compatibility</span></div>
@@ -1669,7 +1786,7 @@ $('tplBody').addEventListener('click', async e => {
       cancelText: 'Cancel',
       danger: true
     }))) return;
-    customTemplates[next] = { ...customTemplates[name], savedAt: Date.now() };
+    customTemplates[next] = { ...cloneData(customTemplates[name]), savedAt: Date.now() };
     delete customTemplates[name];
     writeCustomTemplates();
     syncTemplateSelect();
@@ -1755,18 +1872,25 @@ $('tplFileIn').addEventListener('change', e => {
 });
 
 function download(content, name, type) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([content], { type }));
-  a.download = name; a.click();
-  URL.revokeObjectURL(a.href);
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  /* Revoking in the same tick cancels the download in some browsers. */
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
 /* ============================================================
-   11. EXPORT
+   12. EXPORT
    ============================================================ */
 function htmlToText(html) {
-  const root = document.createElement('div');
-  root.innerHTML = html;
+  const root = parseRawHtml(html).content;
+  /* Stylesheet and script bodies are text nodes; without this their source
+     lands in the plain-text part verbatim. */
+  root.querySelectorAll('style,script,noscript,head,title,template').forEach(n => n.remove());
   root.querySelectorAll('a').forEach(a => {
     const href = String(a.getAttribute('href') || '').trim();
     const label = String(a.textContent || '').replace(/\s+/g, ' ').trim();
@@ -1912,7 +2036,7 @@ document.addEventListener('keydown', e => {
 });
 
 /* ============================================================
-   12. BOOT
+   13. BOOT
    ============================================================ */
 function render() { renderCanvas(); renderInspector(); syncTags(); flagChecks(); syncHistory(); }
 
@@ -1920,6 +2044,12 @@ $('appVersion').textContent = APP_VERSION;
 function loadStarterTemplate() {
   doc.settings = { ...DEFAULT_SETTINGS };
   doc.blocks = BUILTIN_TEMPLATES['Product update'].map(t => newBlock(t));
+}
+
+/* Top-level const bindings live in script scope, not on window, so the smoke
+   suite cannot reach them from the host page without this. */
+if (IS_TEST_MODE) {
+  window.__test = { doc, ESP, DEFAULTS, DEFAULT_SETTINGS, BUILTIN_TEMPLATES, esc, px, safeUrl };
 }
 
 async function boot() {
