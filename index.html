@@ -6,12 +6,30 @@
 <title>Email body builder</title>
 <style>
   :root{
+    color-scheme:dark;
     --ink:#0e1116; --panel:#161b22; --panel-2:#1c232c; --panel-3:#232b36;
-    --line:#2b3441; --line-soft:#212932; --text:#e2e8f0; --muted:#8996a6;
-    --accent:#4fd1ff; --accent-ink:#062430; --amber:#f0b429; --danger:#f2777a; --ok:#5ac48f;
-    --wire:rgba(79,209,255,.55); --wire-soft:rgba(240,180,41,.45);
+    --line:#2b3441; --line-soft:#212932; --line-hover:#3a4553; --text:#e2e8f0; --muted:#8996a6;
+    --accent:#4fd1ff; --accent-ink:#062430; --amber:#f0b429; --danger:#f2777a; --danger-ink:#3a0c0d; --ok:#5ac48f;
+    --wire:rgba(79,209,255,.55); --wire-soft:rgba(240,180,41,.45); --hover-outline:rgba(79,209,255,.35);
+    --stage-a:#0e1116; --stage-b:#101419;
+    --code-bg:#0b0e12; --code-text:#c6d0dc; --tpl-bg:#0f141b;
+    --overlay:rgba(5,8,11,.72); --shadow:rgba(0,0,0,.5);
+    --note-bg:rgba(240,180,41,.07); --note-line:rgba(240,180,41,.25); --note-text:#e8c98a;
+    --info-bg:rgba(79,209,255,.06); --info-line:rgba(79,209,255,.25); --info-text:#a9d9ea;
     --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
     --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
+  }
+  :root[data-theme="light"]{
+    color-scheme:light;
+    --ink:#f4f6f9; --panel:#ffffff; --panel-2:#f1f4f8; --panel-3:#e4eaf1;
+    --line:#d2d9e3; --line-soft:#e3e8ef; --line-hover:#b3bfcd; --text:#1a2029; --muted:#5d6b7c;
+    --accent:#0a7ea4; --accent-ink:#ffffff; --amber:#a86a00; --danger:#c1393c; --danger-ink:#ffffff; --ok:#2c8a5c;
+    --wire:rgba(10,126,164,.55); --wire-soft:rgba(168,106,0,.45); --hover-outline:rgba(10,126,164,.4);
+    --stage-a:#eaeef3; --stage-b:#e2e7ee;
+    --code-bg:#f7f9fc; --code-text:#26313e; --tpl-bg:#f4f7fa;
+    --overlay:rgba(20,28,38,.45); --shadow:rgba(15,25,40,.18);
+    --note-bg:rgba(168,106,0,.08); --note-line:rgba(168,106,0,.28); --note-text:#6b4400;
+    --info-bg:rgba(10,126,164,.07); --info-line:rgba(10,126,164,.3); --info-text:#0d5a75;
   }
   *{box-sizing:border-box}
   html,body{height:100%}
@@ -28,7 +46,7 @@
   .brand .ver{color:var(--accent);border:1px solid var(--line);padding:1px 6px;border-radius:999px;line-height:1.5}
 
   .btn{background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:6px 11px;cursor:pointer;font-size:12px;line-height:1.4;transition:background .12s,border-color .12s}
-  .btn:hover{background:var(--panel-3);border-color:#3a4553}
+  .btn:hover{background:var(--panel-3);border-color:var(--line-hover)}
   .btn:disabled{opacity:.38;cursor:not-allowed}
   .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
   .btn.primary:hover{filter:brightness(1.08)}
@@ -53,13 +71,13 @@
   .legend{margin-top:20px;padding-top:14px;border-top:1px solid var(--line-soft);line-height:1.7;color:var(--muted);font-size:11px}
   .legend code{font-family:var(--mono);color:var(--text);font-size:10px}
 
-  .stage{flex:1;min-width:0;overflow-y:auto;padding:26px 20px 120px;background:repeating-linear-gradient(45deg,#0e1116 0 12px,#101419 12px 24px)}
+  .stage{flex:1;min-width:0;overflow-y:auto;padding:26px 20px 120px;background:repeating-linear-gradient(45deg,var(--stage-a) 0 12px,var(--stage-b) 12px 24px)}
   .stagewrap{margin:0 auto;transition:max-width .2s}
   .canvas{padding:1px}
   .dark .canvas{filter:invert(1) hue-rotate(180deg)}
   .blockwrap{position:relative}
   .blockwrap.sel{outline:2px solid var(--accent);outline-offset:-1px}
-  .blockwrap:hover:not(.sel){outline:1px solid rgba(79,209,255,.35);outline-offset:-1px}
+  .blockwrap:hover:not(.sel){outline:1px solid var(--hover-outline);outline-offset:-1px}
   .bctl{position:absolute;top:-1px;right:-1px;display:none;gap:1px;z-index:5;background:var(--accent);border-radius:0 0 0 5px;overflow:hidden}
   .blockwrap:hover .bctl,.blockwrap.sel .bctl{display:flex}
   .bctl button{background:transparent;border:0;color:var(--accent-ink);cursor:pointer;font-family:var(--mono);font-size:11px;padding:3px 7px;line-height:1.4}
@@ -87,7 +105,9 @@
   .row .field{flex:1}
   .swatch{display:flex;gap:6px;align-items:center}
   .swatch input[type=color]{width:28px;height:28px;padding:0;border:1px solid var(--line);border-radius:5px;background:var(--panel-2);cursor:pointer;flex:0 0 28px}
-  .note{display:flex;gap:7px;margin-top:14px;padding:9px 10px;border-radius:6px;background:rgba(240,180,41,.07);border:1px solid rgba(240,180,41,.25);color:#e8c98a;font-size:11px;line-height:1.55}
+  .note{display:flex;gap:7px;margin-top:14px;padding:9px 10px;border-radius:6px;background:var(--note-bg);border:1px solid var(--note-line);color:var(--note-text);font-size:11px;line-height:1.55}
+  .note.info{background:var(--info-bg);border-color:var(--info-line);color:var(--info-text)}
+  .note.info b{color:var(--accent)}
   .note b{color:var(--amber);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;display:block;margin-bottom:2px}
   .sect{border-top:1px solid var(--line-soft);margin:16px 0 12px;padding-top:13px;display:flex;justify-content:space-between;align-items:center}
   details.adv{margin-top:14px;border-top:1px solid var(--line-soft);padding-top:12px}
@@ -102,23 +122,23 @@
   .check b{display:block;font-weight:600;margin-bottom:1px}
   .check span{color:var(--muted)}
 
-  .fmt{position:fixed;z-index:40;display:none;gap:1px;background:var(--panel-3);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.5);overflow:hidden;align-items:stretch}
+  .fmt{position:fixed;z-index:40;display:none;gap:1px;background:var(--panel-3);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px var(--shadow);overflow:hidden;align-items:stretch}
   .fmt button{background:transparent;border:0;color:var(--text);cursor:pointer;padding:5px 9px;font-family:var(--mono);font-size:12px}
   .fmt button:hover{background:var(--accent);color:var(--accent-ink)}
   .fmt select{background:var(--panel-2);border:0;border-left:1px solid var(--line);font-family:var(--mono);font-size:11px;padding:0 6px;cursor:pointer}
 
-  .modal{position:fixed;inset:0;z-index:50;display:none;background:rgba(5,8,11,.72);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);padding:36px 24px}
+  .modal{position:fixed;inset:0;z-index:50;display:none;background:var(--overlay);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);padding:36px 24px}
   .modal.open{display:flex;align-items:center;justify-content:center}
   .sheet{width:min(940px,100%);max-height:100%;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   .sheet header{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
   .sheet header .eyebrow{margin-right:auto}
-  .sheet pre{margin:0;flex:1;overflow:auto;padding:14px;background:#0b0e12;font-family:var(--mono);font-size:11.5px;line-height:1.65;color:#c6d0dc;white-space:pre-wrap;word-break:break-word}
+  .sheet pre{margin:0;flex:1;overflow:auto;padding:14px;background:var(--code-bg);font-family:var(--mono);font-size:11.5px;line-height:1.65;color:var(--code-text);white-space:pre-wrap;word-break:break-word}
   .meter{padding:10px 14px;border-top:1px solid var(--line);display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:11px;color:var(--muted)}
   .bar{flex:1;height:5px;border-radius:3px;background:var(--panel-3);overflow:hidden}
   .bar i{display:block;width:0;height:100%;background:var(--accent);transition:width .2s}
   .bar i.warn{background:var(--amber)}
   .tplsheet{width:min(860px,100%)}
-  .tplbody{flex:1;overflow:auto;padding:14px;background:#0f141b}
+  .tplbody{flex:1;overflow:auto;padding:14px;background:var(--tpl-bg)}
   .tplrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);margin-bottom:9px}
   .tplname{font-family:var(--mono);font-size:12px;color:var(--text)}
   .tplmeta{margin-top:4px;font-size:11px;color:var(--muted)}
@@ -131,12 +151,24 @@
   .askinput{width:100%;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-family:var(--mono);font-size:12px;color:var(--text)}
   .askinput:focus{border-color:var(--accent);outline:none}
   .askfoot{display:flex;justify-content:flex-end;gap:8px;padding:12px 14px;border-top:1px solid var(--line);background:var(--panel)}
-  .btn.danger{background:var(--danger);border-color:var(--danger);color:#3a0c0d;font-weight:600}
+  .btn.danger{background:var(--danger);border-color:var(--danger);color:var(--danger-ink);font-weight:600}
 
   @media (max-width:980px){.palette{flex:0 0 150px}.inspector{flex:0 0 236px}}
   @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 
 </style>
+<script>
+/* Applied before first paint so a light-theme reload never flashes dark. */
+(function () {
+  var THEME_KEY = 'email_builder_theme_v1';
+  var saved = null;
+  try { saved = localStorage.getItem(THEME_KEY); } catch (e) {}
+  if (saved !== 'light' && saved !== 'dark') {
+    saved = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+  document.documentElement.dataset.theme = saved;
+})();
+</script>
 </head>
 <body>
 
@@ -148,6 +180,7 @@
     <button class="btn" id="manageTplBtn" title="Manage saved custom templates">Manage templates</button>
     <button class="btn icon" id="undoBtn" title="Undo (Ctrl+Z)">↶</button>
     <button class="btn icon" id="redoBtn" title="Redo (Ctrl+Shift+Z)">↷</button>
+    <button class="btn" id="themeBtn" title="Switch the editor between light and dark" aria-pressed="false">theme</button>
     <div class="seg" id="viewSeg">
       <button data-w="0" class="on">desktop</button>
       <button data-w="375">mobile</button>
@@ -1488,17 +1521,17 @@ function renderEmail(s) {
     ${fColor('Card background','$cardBg',s.cardBg)}
     ${fColor('Body text','$text',s.text)}
     ${fColor('Link','$link',s.link)}
-    <div class="note" style="background:rgba(79,209,255,.06);border-color:rgba(79,209,255,.25);color:#a9d9ea"><span><b style="color:var(--accent)">Body text</b>Blocks that set their own colour keep it. Clear a block's colour field to fall back to this one.</span></div>
+    <div class="note info"><span><b>Body text</b>Blocks that set their own colour keep it. Clear a block's colour field to fall back to this one.</span></div>
     <div class="row">${fSel('Text direction','$dir',s.dir,[['ltr','Left to right'],['rtl','Right to left']])}${fText('Language','$lang',s.lang,'en')}</div>
     ${fArea('Preheader','$preheader',s.preheader,3)}
     <div class="note"><span><b>Preheader</b>The preview line in the inbox list. It stays hidden in the body and is padded with zero-width joiners so the client cannot pull your first paragraph in after it.</span></div>
     <div class="sect"><span class="eyebrow">Compatibility</span></div>
     ${fSel('Provider profile','$compatProfile',s.compatProfile,COMPAT_PROFILES)}
     ${fSel('Safe reset in full document','$safeReset',s.safeReset,[[true,'On'],[false,'Off']])}
-    <div class="note" style="background:rgba(79,209,255,.06);border-color:rgba(79,209,255,.25);color:#a9d9ea"><span><b style="color:var(--accent)">Profile</b>Mainstream targets current major clients. Broad and Legacy profiles add stricter warnings for older Outlook and webmail engines.</span></div>
+    <div class="note info"><span><b>Profile</b>Mainstream targets current major clients. Broad and Legacy profiles add stricter warnings for older Outlook and webmail engines.</span></div>
     <div class="sect"><span class="eyebrow">Merge tags</span></div>
     ${fSel('Platform','$esp',s.esp,Object.entries(ESP).map(([k,v]) => [k,v.label]))}
-    <div class="note" style="background:rgba(79,209,255,.06);border-color:rgba(79,209,255,.25);color:#a9d9ea"><span><b style="color:var(--accent)">Insert</b>Select text in any block and use the merge-tag menu in the floating toolbar. Corner radius on the container is ignored by Outlook, which squares it off.</span></div>`;
+    <div class="note info"><span><b>Insert</b>Select text in any block and use the merge-tag menu in the floating toolbar. Corner radius on the container is ignored by Outlook, which squares it off.</span></div>`;
 }
 
 function renderChecks() {
@@ -1831,6 +1864,34 @@ $('darkBtn').addEventListener('click', e => {
   document.body.classList.toggle('dark');
   e.target.classList.toggle('on', document.body.classList.contains('dark'));
 });
+
+/* Editor chrome theme. Distinct from #darkBtn, which only previews the email
+   itself under a forced-dark client. */
+const THEME_KEY = 'email_builder_theme_v1';
+const themeBtn = $('themeBtn');
+function applyTheme(mode, persist) {
+  const theme = mode === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = theme;
+  themeBtn.textContent = theme === 'light' ? '☀ light' : '☾ dark';
+  themeBtn.setAttribute('aria-pressed', theme === 'light' ? 'true' : 'false');
+  if (persist) { try { localStorage.setItem(THEME_KEY, theme); } catch {} }
+}
+function storedTheme() {
+  try {
+    const raw = localStorage.getItem(THEME_KEY);
+    return raw === 'light' || raw === 'dark' ? raw : null;
+  } catch { return null; }
+}
+applyTheme(document.documentElement.dataset.theme, false);
+themeBtn.addEventListener('click', () => {
+  applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light', true);
+});
+if (window.matchMedia) {
+  const sysLight = window.matchMedia('(prefers-color-scheme: light)');
+  const onSysChange = e => { if (!storedTheme()) applyTheme(e.matches ? 'light' : 'dark', false); };
+  if (sysLight.addEventListener) sysLight.addEventListener('change', onSysChange);
+  else if (sysLight.addListener) sysLight.addListener(onSysChange);
+}
 $('undoBtn').addEventListener('click', undo);
 $('redoBtn').addEventListener('click', redo);
 
