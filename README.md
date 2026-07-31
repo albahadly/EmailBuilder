@@ -2,7 +2,7 @@
 
 EmailBuilder is a single-page visual editor for building email bodies and exporting table-based HTML that works across major email clients.
 
-Current version: v1.5
+Current version: v1.7
 
 ## Live URL
 
