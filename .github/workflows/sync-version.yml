@@ -1,0 +1,39 @@
+name: Sync README version
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - index.html
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Two pushes in quick succession would otherwise race to commit the same line.
+concurrency:
+  group: sync-version
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Mirror APP_VERSION into the README
+        run: node .github/scripts/sync-version.js
+
+      - name: Commit if the version moved
+        run: |
+          if git diff --quiet -- README.md; then
+            echo "README.md already in sync; no commit needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "Sync README version with APP_VERSION"
+          git push
