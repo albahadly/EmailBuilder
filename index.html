@@ -1341,7 +1341,12 @@ function wireEditable(wrap, b) {
       flagChecks();
     });
     el.addEventListener('focus', () => { if (sel !== b.id) { sel = b.id; tab = 'block'; renderInspector(); markSel(); } });
-    el.addEventListener('blur', () => { el.dataset.dirty = ''; setTimeout(() => $('fmt').style.display = 'none', 160); });
+    /* Focus moving into the toolbar itself must not dismiss it: opening the
+       merge-tag menu blurs the block, and hiding .fmt would close the dropdown. */
+    el.addEventListener('blur', () => {
+      el.dataset.dirty = '';
+      setTimeout(() => { if (!$('fmt').contains(document.activeElement)) $('fmt').style.display = 'none'; }, 160);
+    });
     el.addEventListener('mouseup', showFmt);
     el.addEventListener('keyup', showFmt);
   });
@@ -1740,11 +1745,13 @@ $('askInput').addEventListener('keydown', e => {
 /* ============================================================
    10. FORMAT TOOLBAR
    ============================================================ */
-let savedRange = null;
+let savedRange = null, savedHost = null;
 function showFmt() {
   const s = window.getSelection(), bar = $('fmt');
   if (!s.rangeCount || s.isCollapsed) { bar.style.display = 'none'; return; }
   savedRange = s.getRangeAt(0).cloneRange();
+  const a = s.anchorNode;
+  savedHost = (a?.nodeType === 1 ? a : a?.parentElement)?.closest('[contenteditable="true"]') || null;
   const r = savedRange.getBoundingClientRect();
   bar.style.display = 'flex';
   bar.style.left = Math.max(8, Math.min(innerWidth - bar.offsetWidth - 8, r.left + r.width/2 - bar.offsetWidth/2)) + 'px';
@@ -1777,13 +1784,19 @@ $('fmt').addEventListener('mousedown', async e => {
   active?.dispatchEvent(new Event('input'));
 });
 
+/* The dropdown still holds focus once it closes, so hand focus back to the block
+   before execCommand rather than relying on it to act on an unfocused editing
+   host. `input` is aimed at the block too — execCommand fires one natively, but
+   document.activeElement here is the select, not the block. */
 $('tagSel').addEventListener('change', e => {
   const tag = e.target.value; e.target.selectedIndex = 0;
-  if (!tag || !savedRange) return;
+  if (!tag || !savedRange || !savedHost) return;
+  savedHost.focus();
   const s = window.getSelection();
   s.removeAllRanges(); s.addRange(savedRange);
   document.execCommand('insertText', false, tag);
-  document.activeElement?.dispatchEvent(new Event('input'));
+  savedHost.dispatchEvent(new Event('input'));
+  showFmt();
 });
 
 function syncTags() {
