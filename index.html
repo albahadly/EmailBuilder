@@ -298,7 +298,7 @@ let uid = 0;
 const nid = () => 'b' + (++uid);
 /* Single source of truth for the version. Rendered into the topbar badge on
    boot; the README carries its own copy that has to be bumped by hand. */
-const APP_VERSION = 'v1.8';
+const APP_VERSION = 'v1.9.0';
 const DRAFT_KEY = 'email_builder_draft_v1';
 const STATE_SCHEMA_VERSION = 2;
 const CUSTOM_TEMPLATES_KEY = 'email_builder_custom_templates_v1';
@@ -1069,19 +1069,191 @@ function syncHistory() { $('undoBtn').disabled = !past.length; $('redoBtn').disa
 /* ============================================================
    5. TEMPLATES
    ============================================================ */
+/* Two fictional senders carry the starters: Rulewright, a developer tool, for the
+   B2B software emails, and Harbour Lane, a coffee roaster, for the retail ones —
+   an abandoned cart or a seasonal sale reads as nonsense coming from a rules
+   engine. Copy is written to clear the pre-send checks as loaded: every image
+   carries alt text, every href resolves, body copy stays at 14px or above, and
+   each footer keeps a working opt-out.
+
+   'Product update' is deliberately bare — the block DEFAULTS already spell out
+   that email, so overriding them here would only duplicate the same strings. */
+const RW_LOGO  = 'https://placehold.co/320x80/ffffff/0b6bcb/png?text=RULEWRIGHT';
+const HL_LOGO  = 'https://placehold.co/320x80/ffffff/8a4b2a/png?text=HARBOUR+LANE';
+const HL_BROWN = '#8a4b2a';
+
 const BUILTIN_TEMPLATES = {
   'Product update': ['logo','image','heading','text','button','divider','columns','footer'],
-  'Plain announcement': ['heading','text','list','button','divider','footer'],
-  'Transactional receipt': ['logo','heading','text','table','divider','text','footer'],
-  'Newsletter digest': ['logo','heading','text','feature','divider','feature','divider','quote','links','footer'],
-  'Welcome email': ['logo','heading','text','button','feature','divider','quote','footer'],
-  'Event invitation': ['logo','image','heading','text','list','button','divider','links','footer'],
-  'Abandoned cart reminder': ['logo','heading','text','image','table','button','divider','footer'],
-  'Onboarding checklist': ['logo','heading','text','list','feature','button','divider','footer'],
-  'Webinar follow-up': ['logo','heading','text','button','divider','quote','text','links','footer'],
-  'Seasonal promotion': ['logo','image','heading','text','button','columns','divider','links','footer'],
-  'Customer feedback request': ['logo','heading','text','button','divider','quote','footer'],
-  'Win-back campaign': ['logo','heading','text','feature','button','divider','list','footer'],
+
+  'Plain announcement': [
+    ['heading', { text:'API keys become scoped tokens on 3 November', size:26 }],
+    ['text', { html:'Long-lived API keys are being retired. From <strong>3 November</strong> every request needs a scoped token, and existing keys stop authenticating on <strong>15 December</strong>. Nothing changes for the SDKs — upgrade to 4.2 and the swap is handled for you.' }],
+    ['list', { items:['Tokens carry an explicit scope and a 90-day expiry',
+                      'Rotation moves to the dashboard, no support ticket needed',
+                      'Audit logs record which token made which call'] }],
+    ['button', { label:'Read the migration guide', href:'https://example.com/docs/scoped-tokens' }],
+    'divider',
+    ['footer', { html:'Rulewright · Auckland, New Zealand<br>You get this because you own an API key on this account.' }]
+  ],
+
+  'Transactional receipt': [
+    ['logo', { src:RW_LOGO, alt:'Rulewright' }],
+    ['heading', { text:'Receipt for invoice RW-4471', size:22 }],
+    ['text', { html:'Thanks — we received your payment on <strong>28 July</strong>. Your Pro plan is paid through 1 August 2027. No action is needed.' }],
+    ['table', { data:'Item | Amount\nRulewright Pro, 12 months | $480.00\nPriority support add-on | $120.00\nGST (15%) | $90.00\nTotal charged | $690.00' }],
+    'divider',
+    ['text', { html:'Charged to Visa ending 4142. A tax invoice is attached to your billing page, and refunds follow our 30-day terms.<br><a href="https://example.com/billing/invoices">View billing history</a>',
+               size:15, lh:24 }],
+    ['footer', { html:'Rulewright · 12 Customs Street East, Auckland 1010, New Zealand<br>Sent to the billing contact for this account.',
+                 unsub:'Manage billing notifications', unsubHref:'https://example.com/billing/preferences' }]
+  ],
+
+  'Newsletter digest': [
+    ['logo', { src:RW_LOGO, alt:'Rulewright' }],
+    ['heading', { text:'The Rulebook — issue 14', size:26 }],
+    ['text', { html:'Three things worth your time this month: a faster evaluator, a post-mortem we probably should not publish, and a rules workshop in Wellington.' }],
+    ['feature', { img:'https://placehold.co/480x480/e9eef5/0b6bcb/png?text=1',
+                  title:'The evaluator got 3× faster',
+                  html:'Flattening rule trees into a jump table means a 400-rule set now resolves in a single pass. The write-up covers why the naive version was quadratic.',
+                  linkLabel:'Read the write-up', linkHref:'https://example.com/blog/evaluator' }],
+    'divider',
+    ['feature', { img:'https://placehold.co/480x480/e9eef5/0b6bcb/png?text=2', imgSide:'right',
+                  title:'How one rule took down checkout',
+                  html:'A rule with an unbounded lookback ran against six months of orders on Black Friday. Here is the timeline, the fix, and the guardrail we shipped after.',
+                  linkLabel:'Read the post-mortem', linkHref:'https://example.com/blog/postmortem' }],
+    'divider',
+    ['quote', { html:'We replaced 4,000 lines of nested conditionals with 40 rules a business analyst can edit without opening a pull request.',
+                cite:'— Platform lead, logistics client' }],
+    ['links', { items:[{ label:'Archive', href:'https://example.com/newsletter', icon:'' },
+                       { label:'Docs', href:'https://example.com/docs', icon:'' },
+                       { label:'Changelog', href:'https://example.com/changelog', icon:'' }] }],
+    ['footer', { html:'Rulewright · Auckland, New Zealand<br>You subscribed to The Rulebook on rulewright.example.com.' }]
+  ],
+
+  'Welcome email': [
+    ['logo', { src:RW_LOGO, alt:'Rulewright' }],
+    ['heading', { text:'Welcome — your workspace is ready' }],
+    ['text', { html:'Thanks for signing up. Your workspace is on the free plan, which covers 10,000 evaluations a month and never expires. Most people ship their first rule in about ten minutes.' }],
+    ['button', { label:'Open your workspace', href:'https://example.com/app' }],
+    ['feature', { img:'https://placehold.co/480x480/e9eef5/0b6bcb/png?text=%E2%97%88',
+                  title:'Start from a rule that already works',
+                  html:'The workspace ships with three worked examples — fraud scoring, shipping bands and feature gating. Clone one and edit it rather than starting from an empty canvas.',
+                  linkLabel:'Browse the examples', linkHref:'https://example.com/docs/examples' }],
+    'divider',
+    ['quote', { html:'I had our discount logic out of the codebase and into rules before the trial was over. The finance team edits it themselves now.',
+                cite:'— Engineering manager, retail client' }],
+    ['footer', { html:'Rulewright · Auckland, New Zealand<br>You get this because you created an account.' }]
+  ],
+
+  'Event invitation': [
+    ['logo', { src:RW_LOGO, alt:'Rulewright' }],
+    ['image', { src:'https://placehold.co/1120x560/0b6bcb/ffffff/png?text=RULECONF+2026',
+                alt:'RuleConf 2026, 14 October, Auckland' }],
+    ['heading', { text:'RuleConf 2026 — 14 October, Auckland' }],
+    ['text', { html:'One day, one track, no vendor pitches. Nine teams walk through decision logic that runs in production, including what broke and what they would do differently.' }],
+    ['list', { items:['Tuesday 14 October, 9:00am–5:00pm',
+                      'Shed 10, Queens Wharf, Auckland',
+                      'Free for Rulewright customers, $180 otherwise',
+                      'Talks recorded and published within a fortnight'] }],
+    ['button', { label:'Reserve a seat', href:'https://example.com/ruleconf' }],
+    'divider',
+    ['links', { items:[{ label:'Full programme', href:'https://example.com/ruleconf/programme', icon:'' },
+                       { label:'Speakers', href:'https://example.com/ruleconf/speakers', icon:'' },
+                       { label:'Getting there', href:'https://example.com/ruleconf/venue', icon:'' }] }],
+    ['footer', { html:'Rulewright · Auckland, New Zealand<br>You get this because you opted into event news.' }]
+  ],
+
+  'Abandoned cart reminder': [
+    ['logo', { src:HL_LOGO, alt:'Harbour Lane Coffee' }],
+    ['heading', { text:'You left the good stuff behind', color:'#2f2018' }],
+    ['text', { html:'Your basket is still here, and the Ethiopia Guji was roasted on Tuesday — it drinks best in the next three weeks. We hold baskets for seven days.' }],
+    ['image', { src:'https://placehold.co/1120x560/8a4b2a/ffffff/png?text=ETHIOPIA+GUJI',
+                alt:'A 250g bag of Ethiopia Guji filter roast' }],
+    ['table', { data:'Item | Price\nEthiopia Guji, 250g whole bean | $24.00\nHarbour Blend, 1kg | $58.00\nShipping (free over $60) | $0.00\nTotal | $82.00',
+                headBg:'#f6efe9', headColor:'#2f2018', border:'#e6dbd1' }],
+    ['button', { label:'Finish your order', href:'https://example.com/cart', bgc:HL_BROWN, borderC:HL_BROWN }],
+    'divider',
+    ['footer', { html:'Harbour Lane Coffee · 8 Jellicoe Street, Auckland 1010, New Zealand<br>You get this because you started an order with us.' }]
+  ],
+
+  'Onboarding checklist': [
+    ['logo', { src:RW_LOGO, alt:'Rulewright' }],
+    ['heading', { text:'You are three steps from your first rule', size:26 }],
+    ['text', { html:'Your workspace has been quiet since you signed up. These three steps take about ten minutes and get a real rule running against real traffic.' }],
+    ['list', { ordered:true,
+               items:['<strong>Connect a data source</strong> — Postgres, a webhook or a CSV upload',
+                      '<strong>Clone a worked example</strong> — fraud scoring is the usual starting point',
+                      '<strong>Evaluate against live traffic</strong> in shadow mode, where nothing is blocked'] }],
+    ['feature', { img:'https://placehold.co/480x480/e9eef5/0b6bcb/png?text=%E2%9C%93',
+                  title:'Shadow mode is the safe first run',
+                  html:'Rules evaluate against production traffic and record what they would have done, without touching a single response. Most teams leave it on for a week.',
+                  linkLabel:'How shadow mode works', linkHref:'https://example.com/docs/shadow-mode' }],
+    ['button', { label:'Pick up where you left off', href:'https://example.com/app/onboarding' }],
+    'divider',
+    ['footer', { html:'Rulewright · Auckland, New Zealand<br>You get this because your workspace setup is unfinished.' }]
+  ],
+
+  'Webinar follow-up': [
+    ['logo', { src:RW_LOGO, alt:'Rulewright' }],
+    ['heading', { text:'The recording and the slides, as promised', size:26 }],
+    ['text', { html:'Thanks for joining <strong>Decision logic that survives an audit</strong> on Thursday. The recording runs 47 minutes and the demo starts at 12:30 if you want to skip the preamble.' }],
+    ['button', { label:'Watch the recording', href:'https://example.com/webinars/audit-ready' }],
+    'divider',
+    ['quote', { html:'The question we could not get to: yes, rule versions are retained for seven years on Enterprise, and each one is signed.',
+                cite:'— Follow-up from the Q&A' }],
+    ['text', { html:'We ran out of time on about a dozen questions. The answers are written up in full, including the ones about SOC 2 evidence and rollback windows.',
+               size:15, lh:24 }],
+    ['links', { items:[{ label:'Slides (PDF)', href:'https://example.com/webinars/audit-ready.pdf', icon:'' },
+                       { label:'Q&A write-up', href:'https://example.com/webinars/audit-ready-qa', icon:'' },
+                       { label:'Book a walkthrough', href:'https://example.com/demo', icon:'' }] }],
+    ['footer', { html:'Rulewright · Auckland, New Zealand<br>You get this because you registered for the webinar.' }]
+  ],
+
+  'Seasonal promotion': [
+    ['logo', { src:HL_LOGO, alt:'Harbour Lane Coffee' }],
+    ['image', { src:'https://placehold.co/1120x560/8a4b2a/ffffff/png?text=WINTER+ROASTS',
+                alt:'Winter roasts, 20% off until 31 August' }],
+    ['heading', { text:'20% off winter roasts until Sunday', color:'#2f2018' }],
+    ['text', { html:'The darker end of the range is on special until <strong>31 August</strong>. These are the roasts that hold up to milk and a cold morning — no code needed, the discount is applied at checkout.' }],
+    ['button', { label:'Shop winter roasts', href:'https://example.com/shop/winter', bgc:HL_BROWN, borderC:HL_BROWN }],
+    ['columns', { cols:[{ img:'', html:'<strong>Harbour Blend</strong><br>Chocolate and toasted almond. Our house roast, and the one we drink.' },
+                        { img:'', html:'<strong>Night Shift</strong><br>The darkest we roast. Built for milk, unapologetic on its own.' }],
+                  color:'#5b4638' }],
+    'divider',
+    ['links', { items:[{ label:'Subscriptions', href:'https://example.com/subscriptions', icon:'' },
+                       { label:'Wholesale', href:'https://example.com/wholesale', icon:'' },
+                       { label:'Our roastery', href:'https://example.com/about', icon:'' }],
+                color:HL_BROWN }],
+    ['footer', { html:'Harbour Lane Coffee · 8 Jellicoe Street, Auckland 1010, New Zealand<br>You get this because you asked us to email you about specials.' }]
+  ],
+
+  'Customer feedback request': [
+    ['logo', { src:RW_LOGO, alt:'Rulewright' }],
+    ['heading', { text:'Two minutes on how the migration went?', size:26 }],
+    ['text', { html:'You moved to scoped tokens last month, which is the part of the product we are least sure about. Six questions, genuinely about two minutes, and no sales follow-up.' }],
+    ['button', { label:'Answer six questions', href:'https://example.com/survey/tokens' }],
+    'divider',
+    ['quote', { html:'Last round told us the rollback docs were the worst part of the product. We rewrote them, and that is the only reason they are now readable.',
+                cite:'— What we did with the previous survey' }],
+    ['footer', { html:'Rulewright · Auckland, New Zealand<br>You get this because you completed the token migration.' }]
+  ],
+
+  'Win-back campaign': [
+    ['logo', { src:RW_LOGO, alt:'Rulewright' }],
+    ['heading', { text:'Your workspace has been quiet since March', size:26 }],
+    ['text', { html:'No rules have run in about five months. That is usually one of two things — the tool did not fit, or the person who set it up moved on. Either way, your rules and history are still here.' }],
+    ['feature', { img:'https://placehold.co/480x480/e9eef5/0b6bcb/png?text=%E2%86%BA',
+                  title:'A fair bit has changed since March',
+                  html:'Scoped tokens, a 3× faster evaluator, and a visual builder that non-developers can actually use. The last one is what most returning teams came back for.',
+                  linkLabel:'See what shipped', linkHref:'https://example.com/changelog' }],
+    ['button', { label:'Pick your workspace back up', href:'https://example.com/app' }],
+    'divider',
+    ['list', { items:['Your rules and version history are untouched',
+                      'The free plan still covers 10,000 evaluations a month',
+                      'Or close the account in one click — no call required'] }],
+    ['footer', { html:'Rulewright · Auckland, New Zealand<br>You get this because you have an inactive workspace.' }]
+  ],
+
   'Blank': []
 };
 
@@ -1259,7 +1431,7 @@ function loadTemplate(templateId) {
 
   const name = templateId.startsWith('builtin:') ? templateId.slice(8) : templateId;
   if (!BUILTIN_TEMPLATES[name]) return;
-  doc.blocks = BUILTIN_TEMPLATES[name].map(t => newBlock(t));
+  doc.blocks = BUILTIN_TEMPLATES[name].map(blockFromEntry);
   sel = null;
   render();
 }
@@ -1289,7 +1461,12 @@ async function saveCurrentTemplate() {
   renderTemplateManager();
 }
 
-const newBlock = t => ({ id: nid(), bg:'', pl:null, pr:null, ...DEFAULTS[t]() });
+const newBlock = (t, over) => ({ id: nid(), bg:'', pl:null, pr:null, ...DEFAULTS[t](), ...over });
+
+/* A starter entry is either a bare type — take the block defaults — or
+   [type, overrides] carrying that starter's own copy. Without the overrides
+   every starter renders the same placeholder text in a different order. */
+const blockFromEntry = e => Array.isArray(e) ? newBlock(e[0], e[1]) : newBlock(e);
 
 /* ============================================================
    6. CANVAS
@@ -2145,7 +2322,7 @@ function render() { renderCanvas(); renderInspector(); syncTags(); flagChecks();
 $('appVersion').textContent = APP_VERSION;
 function loadStarterTemplate() {
   doc.settings = { ...DEFAULT_SETTINGS };
-  doc.blocks = BUILTIN_TEMPLATES['Product update'].map(t => newBlock(t));
+  doc.blocks = BUILTIN_TEMPLATES['Product update'].map(blockFromEntry);
 }
 
 /* Top-level const bindings live in script scope, not on window, so the smoke
